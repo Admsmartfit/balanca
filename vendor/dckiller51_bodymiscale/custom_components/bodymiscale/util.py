@@ -1,0 +1,120 @@
+"""Util module."""
+
+from collections.abc import Mapping
+from datetime import datetime
+from typing import Any
+
+from .const import CONF_GENDER, CONF_HEIGHT
+from .models import Gender
+
+
+def check_value_constraints(value: float, minimum: float, maximum: float) -> float:
+    """Set the value to a boundary if it overflows."""
+    if value < minimum:
+        return minimum
+    if value > maximum:
+        return maximum
+    return value
+
+
+def to_float(val: Any, default: float = 0.0) -> float:
+    """Convert value to float if possible, otherwise return a default."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return default
+    return default
+
+
+def get_ideal_weight(config: Mapping[str, Any]) -> float:
+    """Get ideal weight based on height and gender."""
+    height = float(config[CONF_HEIGHT])
+    gender = config[CONF_GENDER]
+
+    ideal = (height - 70) * 0.6 if gender == Gender.FEMALE else (height - 80) * 0.7
+
+    return round(ideal, 1)
+
+
+def get_bmr_schofield(weight: float, age: int, gender: Gender) -> float:
+    """Basal Metabolic Rate using Schofield (WHO Standard)."""
+    # Index 0: Male, Index 1: Female
+    data = {
+        Gender.MALE: [
+            (59.512, -30.4),  # 0-3
+            (22.706, 504.3),  # 3-10
+            (17.686, 658.2),  # 10-18
+            (15.057, 692.2),  # 18-30
+            (11.472, 873.1),  # 30-60
+            (11.711, 587.7),  # 60+
+        ],
+        Gender.FEMALE: [
+            (58.317, -31.1),  # 0-3
+            (20.315, 485.9),  # 3-10
+            (13.384, 692.6),  # 10-18
+            (14.818, 486.6),  # 18-30
+            (8.126, 845.6),  # 30-60
+            (9.082, 658.5),  # 60+
+        ],
+    }
+
+    coeffs = data.get(gender, data[Gender.MALE])
+
+    if age < 3:
+        slope, constant = coeffs[0]
+    elif age < 10:
+        slope, constant = coeffs[1]
+    elif age < 18:
+        slope, constant = coeffs[2]
+    elif age < 30:
+        slope, constant = coeffs[3]
+    elif age < 60:
+        slope, constant = coeffs[4]
+    else:
+        slope, constant = coeffs[5]
+
+    return slope * weight + constant
+
+
+def get_metabolic_age_clamped(met_age: int, real_age: int) -> int:
+    """Metabolic age with dynamic ceiling (max: real_age + 25, capped at 95)."""
+    ceiling = min(95, real_age + 25)
+    return int(check_value_constraints(float(met_age), 12, ceiling))
+
+
+def clamp_water_percentage(value: float) -> float:
+    """Clamp water percentage to Deurenberg physiological limit (73%)."""
+    return check_value_constraints(value, 35.0, 73.0)
+
+
+def get_bmi_label(bmi: float) -> str:
+    """Get BMI label based on WHO standards."""
+    if bmi < 18.5:
+        return "underweight"
+    if bmi < 25:
+        return "normal_or_healthy_weight"
+    if bmi < 27:
+        return "slight_overweight"
+    if bmi < 30:
+        return "overweight"
+    if bmi < 35:
+        return "moderate_obesity"
+    if bmi < 40:
+        return "severe_obesity"
+    return "massive_obesity"
+
+
+def get_age(date_str: str) -> int:
+    """Get current age from birthdate string (YYYY-MM-DD)."""
+    try:
+        born = datetime.strptime(date_str, "%Y-%m-%d")
+        today = datetime.today()
+        age = today.year - born.year
+        if (today.month, today.day) < (born.month, born.day):
+            age -= 1
+        return age
+    except (ValueError, TypeError):
+        return 0

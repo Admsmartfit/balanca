@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiScale Analytics Desktop</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>MiScale Analytics Desktop</h1>
+    <div class="ble-status" id="ble-status" data-state="connecting">
+      <span class="dot"></span>
+      <span class="label">conectando…</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="confirm-banner" id="confirm-banner" hidden>
+      <p>Pesagem de <strong id="confirm-weight">--</strong> kg — de quem é?</p>
+      <div class="confirm-options" id="confirm-options"></div>
+    </section>
+
+    <section class="weight-card">
+      <div class="weight-value">
+        <span id="weight-value">--.-</span>
+        <span class="unit" id="weight-unit">kg</span>
+      </div>
+      <div class="weight-owner" id="weight-owner"></div>
+      <div class="body-score" id="body-score" hidden>
+        <span class="body-score-value">--</span>
+        <span class="body-score-label">Body Score</span>
+      </div>
+      <div class="weight-hint" id="weight-hint">aguardando leitura da balança</div>
+    </section>
+
+    <section class="metrics-grid" id="metrics-grid">
+      <div class="metric" data-metric="bmi"><span class="metric-label">IMC</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="fat_percentage"><span class="metric-label">Gordura</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="water_percentage"><span class="metric-label">Água</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="muscle_mass_kg"><span class="metric-label">Massa muscular</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="bone_mass_kg"><span class="metric-label">Massa óssea</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="visceral_fat"><span class="metric-label">Gordura visceral</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="bmr_kcal"><span class="metric-label">BMR</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="protein_percentage"><span class="metric-label">Proteína</span><span class="metric-value">--</span></div>
+      <div class="metric" data-metric="metabolic_age"><span class="metric-label">Idade metabólica</span><span class="metric-value">--</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Perfis</h2>
+      </div>
+      <ul class="profile-list" id="profile-list"></ul>
+
+      <form id="profile-form">
+        <input type="hidden" id="profile-id" value="" />
+        <label>
+          Nome
+          <input type="text" id="profile-name" required maxlength="40" />
+        </label>
+        <label>
+          Altura (cm)
+          <input type="number" id="profile-height" min="100" max="220" step="1" required />
+        </label>
+        <label>
+          Idade
+          <input type="number" id="profile-age" min="1" max="99" step="1" required />
+        </label>
+        <label>
+          Sexo
+          <select id="profile-sex">
+            <option value="male">Masculino</option>
+            <option value="female">Feminino</option>
+          </select>
+        </label>
+        <label>
+          Algoritmo
+          <select id="profile-algorithm">
+            <option value="xiaomi">Xiaomi / Zepp Life</option>
+            <option value="science">Científico</option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button type="submit" id="profile-submit">Adicionar perfil</button>
+          <button type="button" id="profile-cancel" hidden>Cancelar edição</button>
+        </div>
+        <span class="profile-saved" id="profile-saved"></span>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Histórico</h2>
+        <div class="history-controls">
+          <select id="history-profile"></select>
+          <select id="history-metric">
+            <option value="weight_kg">Peso</option>
+            <option value="fat_percentage">Gordura %</option>
+            <option value="muscle_mass_kg">Massa muscular</option>
+          </select>
+          <a id="export-csv" href="#" target="_blank">Exportar CSV</a>
+          <a id="export-json" href="#" target="_blank">Exportar JSON</a>
+        </div>
+      </div>
+      <svg id="trend-chart" viewBox="0 0 640 200" preserveAspectRatio="none"></svg>
+      <p class="history-empty" id="history-empty">sem medições ainda</p>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
