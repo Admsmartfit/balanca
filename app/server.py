@@ -1,35 +1,62 @@
-"""FastAPI + WebSocket — RF04 (atualizações parciais/finais), RF05/RF06
-(perfis com algoritmo por perfil), RF07 (histórico + exportação), RF08
-(identificação automática por peso) e RF10 (modo convidado).
+"""FastAPI + WebSocket — quiosque de login por CPF/telefone + PIN e painel
+administrativo, conforme o PRD de cadastro e autenticação.
 
-Arquitetura (PRD seção 4, modo passivo): o scanner BLE roda na mesma
-`asyncio` loop do servidor, publica cada leitura em uma fila, e uma task
-separada consome a fila, decide a qual perfil ela pertence, calcula as
-métricas quando a leitura está estabilizada e transmite o resultado a todos
-os clientes WebSocket conectados.
+Duas superfícies servidas pelo mesmo processo:
+
+- **Quiosque** (`/`, teclado numérico físico USB): motor de sugestão por
+  peso (RF04) enquanto ninguém está autenticado, login por documento+PIN ou
+  por sugestão+PIN (RF01/RF03), medição vinculada à sessão autenticada,
+  timeout de 30s sem toque nem variação de peso (RF06). O resultado inclui
+  faixas de referência (abaixo/normal/acima) e o histórico recente do
+  cliente (`GET /api/kiosk/history`) para o medidor visual e os
+  mini-gráficos de tendência do painel de resultado.
+- **Painel administrativo** (`/admin`, mouse+teclado): login por
+  e-mail+senha (RF07 — RBAC), CRUD de clientes, reset manual de PIN
+  (substitui a recuperação por SMS/WhatsApp do PRD — ver
+  THIRD_PARTY_NOTICES.md), histórico e exportação por cliente, download do
+  relatório em PDF de cada medição, e fotos de evolução por cliente.
+
+Cada medição persistida também gera um PDF automaticamente em segundo
+plano (`app/report.py`, salvo em `data/reports/`) — o envio desse PDF
+(e-mail, WhatsApp etc.) é trabalho futuro, fora do escopo atual.
+
+O scanner BLE roda na mesma `asyncio` loop do servidor, publica cada leitura
+em uma fila; uma task separada consome a fila e decide, com base em existir
+ou não uma sessão de quiosque autenticada, se a leitura alimenta o motor de
+sugestão ou uma medição de verdade.
 """
 
 from __future__ import annotations
 
 import asyncio
-import itertools
 import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .ble_scanner import MiScaleScanner, ScaleReading
-from .config import WEB_DIR, load_config
-from .db import DB_PATH, Database, InvalidProfile, Profile
-from .engine import BodyMetricsInput, OutOfRangeReading, compute_body_score, compute_metrics
-from .matching import MatchStatus, match_profile
-from .notifications import notify_ambiguous_measurement
+from .config import ROOT_DIR, WEB_DIR, load_config
+from .db import DB_PATH, Client, Database, InvalidClient
+from .engine import BodyMetricsInput, OutOfRangeReading, Range, compute_body_score, compute_metrics, reference_ranges_for
+from .matching import suggest_clients_by_weight
+from .report import generate_and_save_report, generate_measurement_report, report_path_for
+from .security import ADMIN_SESSION_COOKIE, ADMIN_SESSION_TTL_SECONDS, AdminSessionStore, verify_password
 
 logger = logging.getLogger(__name__)
+
+SESSION_TIMEOUT_SECONDS = 30
+WEIGHT_CHANGE_EPSILON_KG = 0.2
+IDLE_SUGGESTION_MIN_KG = 10.0
+IDLE_SUGGESTION_MAX_KG = 200.0
+PHOTOS_DIR = ROOT_DIR / "data" / "photos"
+MAX_PHOTO_BYTES = 8 * 1024 * 1024
 
 
 class ConnectionManager:
@@ -54,17 +81,52 @@ class ConnectionManager:
             self.disconnect(connection)
 
 
-class ProfileIn(BaseModel):
-    name: str
-    height_cm: float = Field(ge=100, le=220)
-    age: int = Field(ge=1, le=99)
+@dataclass(slots=True)
+class KioskSession:
+    client_id: int
+    authenticated_at: float
+    last_activity: float
+    last_weight_seen: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Modelos de request
+# ---------------------------------------------------------------------------
+
+
+class KioskLoginIn(BaseModel):
+    document: str | None = None
+    client_id: int | None = None
+    pin: str
+
+    @model_validator(mode="after")
+    def _exactly_one_identifier(self) -> "KioskLoginIn":
+        if (self.document is None) == (self.client_id is None):
+            raise ValueError("informe exatamente um entre document e client_id")
+        return self
+
+
+class ClientIn(BaseModel):
+    full_name: str
+    document: str
+    birthdate: str  # YYYY-MM-DD
     sex: str
+    height_cm: float = Field(ge=100, le=220)
     algorithm: str = "xiaomi"
 
 
-class ConfirmIn(BaseModel):
-    pending_id: int
-    profile_id: int | None = None  # None => confirmar como convidado
+class ClientCreateIn(ClientIn):
+    pin: str
+    accepted_terms: bool = False
+
+
+class PinResetIn(BaseModel):
+    new_pin: str
+
+
+class AdminLoginIn(BaseModel):
+    email: str
+    password: str
 
 
 def _metrics_to_dict(metrics, body_score: float) -> dict:
@@ -82,42 +144,51 @@ def _metrics_to_dict(metrics, body_score: float) -> dict:
     }
 
 
-def _compute_for_profile(profile: Profile, reading: ScaleReading) -> tuple[dict | None, str | None, bool]:
-    """Retorna (métricas ou None, aviso ou None, persistir?) para um perfil + leitura estabilizada.
+def _ranges_to_dict(ranges: dict[str, Range]) -> dict:
+    return {metric: {"low": r.low, "high": r.high} for metric, r in ranges.items()}
 
-    Sem impedância válida, o peso ainda é gravado — só as métricas derivadas
-    ficam indisponíveis (PRD seção 13, "modo apenas peso"). Uma leitura fora
-    dos limites fisiológicos (RNF06) é descartada, não persistida.
+
+def _compute_for_client(
+    client: Client, reading: ScaleReading
+) -> tuple[dict | None, dict | None, str | None, bool]:
+    """Retorna (métricas ou None, faixas de referência ou None, aviso ou None, persistir?).
+
+    Sem impedância válida não há composição corporal pra calcular nem pra
+    mostrar no histórico/relatório — a leitura só de peso é descartada, não
+    persistida (mesmo tratamento de uma leitura fora dos limites
+    fisiológicos, RNF06). O quiosque ainda mostra o peso e o aviso na tela,
+    só não grava uma linha vazia no histórico do cliente.
     """
     if reading.impedance_ohm is None:
-        return None, "sem impedância válida — só o peso foi registrado", True
+        return None, None, "sem impedância válida — só o peso foi registrado", False
 
     body_metrics_input = BodyMetricsInput(
         weight_kg=reading.weight_kg,
-        height_cm=profile.height_cm,
-        age=profile.age,
-        sex=profile.sex,
+        height_cm=client.height_cm,
+        age=client.age,
+        sex=client.sex,
         impedance_ohm=reading.impedance_ohm,
     )
     try:
-        metrics = compute_metrics(profile.algorithm, body_metrics_input)
+        metrics = compute_metrics(client.algorithm, body_metrics_input)
     except OutOfRangeReading as exc:
         logger.warning("leitura descartada (RNF06): %s", exc)
-        return None, f"leitura fora dos limites fisiológicos: {exc}", False
+        return None, None, f"leitura fora dos limites fisiológicos: {exc}", False
 
     body_score = compute_body_score(body_metrics_input, metrics)
-    return _metrics_to_dict(metrics, body_score), None, True
+    ranges = _ranges_to_dict(reference_ranges_for(body_metrics_input))
+    return _metrics_to_dict(metrics, body_score), ranges, None, True
 
 
-def create_app(db_path: Path = DB_PATH, *, desktop_notifications: bool = True) -> FastAPI:
+def create_app(db_path: Path = DB_PATH) -> FastAPI:
     config = load_config()
     db = Database(db_path)
     manager = ConnectionManager()
+    admin_sessions = AdminSessionStore()
     reading_queue: asyncio.Queue[ScaleReading] = asyncio.Queue()
     last_seen: dict[str, tuple[float, float | None, bool]] = {}
-    pending_readings: dict[int, ScaleReading] = {}
-    pending_id_counter = itertools.count(1)
     loop_holder: dict[str, asyncio.AbstractEventLoop] = {}
+    kiosk_session: dict[str, KioskSession | None] = {"current": None}
 
     def on_reading(reading: ScaleReading) -> None:
         # bleak chama isso na loop do app; testes/hooks externos podem chamar de outra
@@ -130,74 +201,91 @@ def create_app(db_path: Path = DB_PATH, *, desktop_notifications: bool = True) -
 
     scanner = MiScaleScanner(config.scale_mac_address, on_reading)
 
-    async def handle_stabilized(reading: ScaleReading) -> None:
-        profiles = db.list_profiles()
-        result = match_profile(profiles, db.last_weight_by_profile(), reading.weight_kg)
+    def touch_session() -> None:
+        session = kiosk_session["current"]
+        if session is not None:
+            session.last_activity = time.monotonic()
 
-        if result.status is MatchStatus.NO_PROFILES:
-            await manager.broadcast(
-                {
-                    "type": "final",
-                    "mac_address": reading.mac_address,
-                    "weight_kg": reading.weight_kg,
-                    "unit": reading.unit,
-                    "profile": None,
-                    "is_guest": True,
-                    "algorithm": None,
-                    "metrics": None,
-                    "warning": "nenhum perfil cadastrado — medição de convidado",
-                }
-            )
+    async def end_session(reason: str) -> None:
+        if kiosk_session["current"] is None:
             return
+        kiosk_session["current"] = None
+        await manager.broadcast({"type": "session_ended", "reason": reason})
 
-        if result.status is MatchStatus.MATCHED:
-            profile = result.profile
-            assert profile is not None
-            metrics, warning, persist = _compute_for_profile(profile, reading)
-            if persist:
-                db.insert_measurement(
-                    profile_id=profile.id,
-                    weight_kg=reading.weight_kg,
-                    unit=reading.unit,
-                    impedance_ohm=reading.impedance_ohm,
-                    algorithm=profile.algorithm,
-                    metrics=metrics,
-                )
-            await manager.broadcast(
-                {
-                    "type": "final",
-                    "mac_address": reading.mac_address,
-                    "weight_kg": reading.weight_kg,
-                    "unit": reading.unit,
-                    "profile": profile.as_dict(),
-                    "is_guest": False,
-                    "algorithm": profile.algorithm,
-                    "metrics": metrics,
-                    "warning": warning,
-                }
-            )
+    async def start_session(client: Client) -> None:
+        kiosk_session["current"] = KioskSession(
+            client_id=client.id, authenticated_at=time.monotonic(), last_activity=time.monotonic()
+        )
+        await manager.broadcast({"type": "session_started", "client": client.as_dict()})
+
+    async def handle_idle_reading(reading: ScaleReading) -> None:
+        if not (IDLE_SUGGESTION_MIN_KG <= reading.weight_kg <= IDLE_SUGGESTION_MAX_KG):
             return
-
-        # AMBIGUOUS ou NO_MATCH — precisa de confirmação manual (RF08).
-        pending_id = next(pending_id_counter)
-        pending_readings[pending_id] = reading
+        suggestions = suggest_clients_by_weight(db.list_clients(), db.last_weight_by_client(), reading.weight_kg)
         await manager.broadcast(
             {
-                "type": "needs_confirmation",
-                "pending_id": pending_id,
+                "type": "idle_weight",
                 "weight_kg": reading.weight_kg,
                 "unit": reading.unit,
-                "reason": "ambiguous" if result.status is MatchStatus.AMBIGUOUS else "no_match",
-                "candidates": [p.as_dict() for p in result.candidates],
+                "suggestions": [c.as_public_dict() for c in suggestions],
             }
         )
-        if desktop_notifications:
-            await asyncio.to_thread(
-                notify_ambiguous_measurement,
-                reading.weight_kg,
-                reading.unit,
-                [p.name for p in result.candidates],
+
+    async def handle_authenticated_reading(session: KioskSession, reading: ScaleReading) -> None:
+        if session.last_weight_seen is None or abs(reading.weight_kg - session.last_weight_seen) > (
+            WEIGHT_CHANGE_EPSILON_KG
+        ):
+            session.last_weight_seen = reading.weight_kg
+            session.last_activity = time.monotonic()
+
+        if not reading.stabilized or reading.removed:
+            await manager.broadcast(
+                {"type": "partial", "weight_kg": reading.weight_kg, "unit": reading.unit}
             )
+            return
+
+        client = db.get_client(session.client_id)
+        if client is None:  # cliente excluído pelo admin no meio da sessão
+            await end_session("client_removed")
+            return
+
+        metrics, ranges, warning, persist = _compute_for_client(client, reading)
+        measurement_id = None
+        if persist:
+            measurement_id = db.insert_measurement(
+                client_id=client.id,
+                weight_kg=reading.weight_kg,
+                unit=reading.unit,
+                impedance_ohm=reading.impedance_ohm,
+                algorithm=client.algorithm,
+                metrics=metrics,
+            )
+            if metrics is not None:
+                asyncio.create_task(_generate_report(client.id, measurement_id))
+        await manager.broadcast(
+            {
+                "type": "final",
+                "weight_kg": reading.weight_kg,
+                "unit": reading.unit,
+                "client": client.as_dict(),
+                "algorithm": client.algorithm,
+                "metrics": metrics,
+                "ranges": ranges,
+                "measurement_id": measurement_id,
+                "warning": warning,
+            }
+        )
+
+    async def _generate_report(client_id: int, measurement_id: int) -> None:
+        """Gera o PDF do resultado em segundo plano — nunca bloqueia nem derruba a leitura da balança."""
+        try:
+            client = db.get_client(client_id)
+            measurement = db.get_measurement(measurement_id)
+            if client is None or measurement is None:
+                return
+            await asyncio.to_thread(generate_and_save_report, client, measurement)
+        except Exception:
+            logger.exception("falha ao gerar o PDF da medição %s", measurement_id)
 
     async def consume_readings() -> None:
         while True:
@@ -207,23 +295,24 @@ def create_app(db_path: Path = DB_PATH, *, desktop_notifications: bool = True) -
                 continue
             last_seen[reading.mac_address] = dedupe_key
 
-            if not reading.stabilized or reading.removed:
-                await manager.broadcast(
-                    {
-                        "type": "partial",
-                        "mac_address": reading.mac_address,
-                        "weight_kg": reading.weight_kg,
-                        "unit": reading.unit,
-                    }
-                )
-                continue
+            session = kiosk_session["current"]
+            if session is None:
+                await handle_idle_reading(reading)
+            else:
+                await handle_authenticated_reading(session, reading)
 
-            await handle_stabilized(reading)
+    async def watch_session_timeout() -> None:
+        while True:
+            await asyncio.sleep(1)
+            session = kiosk_session["current"]
+            if session is not None and (time.monotonic() - session.last_activity) > SESSION_TIMEOUT_SECONDS:
+                await end_session("timeout")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         loop_holder["loop"] = asyncio.get_running_loop()
         consumer_task = asyncio.create_task(consume_readings())
+        timeout_task = asyncio.create_task(watch_session_timeout())
         await scanner.start()
         logger.info("MiScale Analytics Desktop pronto em http://%s:%d", config.host, config.port)
         try:
@@ -231,121 +320,235 @@ def create_app(db_path: Path = DB_PATH, *, desktop_notifications: bool = True) -
         finally:
             await scanner.stop()
             consumer_task.cancel()
+            timeout_task.cancel()
             db.close()
 
     app = FastAPI(title="MiScale Analytics Desktop", lifespan=lifespan)
     app.state.on_reading = on_reading  # hooks de teste — injetam eventos sem precisar da balança física
     app.state.db = db
+    app.state.admin_sessions = admin_sessions
+    app.state.kiosk_session = kiosk_session  # hook de teste — manipula o relógio da sessão sem dormir de verdade
 
-    # -- Perfis (RF05/RF06) --------------------------------------------------
+    def require_admin(miscale_admin_session: str | None = Cookie(default=None, alias=ADMIN_SESSION_COOKIE)):
+        admin_id = admin_sessions.resolve(miscale_admin_session)
+        if admin_id is None:
+            raise HTTPException(status_code=401, detail="sessão de administrador inválida ou expirada")
+        admin = db.get_admin(admin_id)
+        if admin is None:
+            raise HTTPException(status_code=401, detail="administrador não encontrado")
+        return admin
 
-    @app.get("/api/profiles")
-    async def list_profiles() -> list[dict]:
-        return [p.as_dict() for p in db.list_profiles()]
+    # -- Quiosque: login por documento/sugestão + PIN (RF01, RF03, RF04) -----
 
-    @app.post("/api/profiles")
-    async def create_profile(body: ProfileIn):
-        try:
-            profile = db.create_profile(
-                name=body.name, height_cm=body.height_cm, age=body.age, sex=body.sex, algorithm=body.algorithm
-            )
-        except InvalidProfile as exc:
-            return JSONResponse(status_code=422, content={"error": str(exc)})
-        return profile.as_dict()
+    @app.get("/api/kiosk/state")
+    async def kiosk_state() -> dict:
+        session = kiosk_session["current"]
+        if session is None:
+            return {"status": "idle"}
+        client = db.get_client(session.client_id)
+        if client is None:
+            return {"status": "idle"}
+        return {"status": "authenticated", "client": client.as_dict()}
 
-    @app.put("/api/profiles/{profile_id}")
-    async def update_profile(profile_id: int, body: ProfileIn):
-        try:
-            profile = db.update_profile(
-                profile_id,
-                name=body.name,
-                height_cm=body.height_cm,
-                age=body.age,
-                sex=body.sex,
-                algorithm=body.algorithm,
-            )
-        except InvalidProfile as exc:
-            return JSONResponse(status_code=422, content={"error": str(exc)})
-        return profile.as_dict()
+    @app.get("/api/kiosk/history")
+    async def kiosk_history(limit: int = 8) -> list[dict]:
+        session = kiosk_session["current"]
+        if session is None:
+            return []
+        return db.list_measurements(session.client_id, limit=limit)
 
-    @app.delete("/api/profiles/{profile_id}")
-    async def delete_profile(profile_id: int) -> dict:
-        db.delete_profile(profile_id)
+    @app.post("/api/kiosk/login")
+    async def kiosk_login(body: KioskLoginIn):
+        if body.document is not None:
+            client = db.find_client_by_document(body.document)
+        else:
+            client = db.get_client(body.client_id)  # type: ignore[arg-type]
+
+        if client is None or not db.verify_client_pin(client.id, body.pin):
+            return JSONResponse(status_code=401, content={"error": "documento/sugestão ou PIN incorretos"})
+
+        await start_session(client)
+        return {"client": client.as_dict()}
+
+    @app.post("/api/kiosk/logout")
+    async def kiosk_logout() -> dict:
+        await end_session("manual")
         return {"ok": True}
 
-    # -- Histórico e exportação (RF07, RF09) ---------------------------------
+    @app.post("/api/kiosk/touch")
+    async def kiosk_touch() -> dict:
+        touch_session()
+        return {"ok": True}
 
-    @app.get("/api/profiles/{profile_id}/measurements")
-    async def list_measurements(profile_id: int, limit: int = 200) -> list[dict]:
-        return db.list_measurements(profile_id, limit=limit)
+    # -- Administração: login por e-mail/senha (RF07 — RBAC) ------------------
 
-    @app.get("/api/profiles/{profile_id}/measurements/export")
-    async def export_measurements(profile_id: int, format: str = "csv"):
+    @app.post("/api/admin/login")
+    async def admin_login(body: AdminLoginIn, response: Response):
+        found = db.get_admin_by_email(body.email)
+        if found is None or not verify_password(body.password, found[1]):
+            return JSONResponse(status_code=401, content={"error": "e-mail ou senha incorretos"})
+        admin, _ = found
+        token = admin_sessions.create(admin.id)
+        response.set_cookie(
+            ADMIN_SESSION_COOKIE,
+            token,
+            httponly=True,
+            samesite="lax",
+            max_age=ADMIN_SESSION_TTL_SECONDS,
+        )
+        return {"id": admin.id, "email": admin.email}
+
+    @app.post("/api/admin/logout")
+    async def admin_logout(
+        response: Response, miscale_admin_session: str | None = Cookie(default=None, alias=ADMIN_SESSION_COOKIE)
+    ) -> dict:
+        admin_sessions.revoke(miscale_admin_session)
+        response.delete_cookie(ADMIN_SESSION_COOKIE)
+        return {"ok": True}
+
+    @app.get("/api/admin/me")
+    async def admin_me(admin=Depends(require_admin)) -> dict:
+        return {"id": admin.id, "email": admin.email}
+
+    # -- Clientes (CRUD administrativo) ---------------------------------------
+
+    @app.get("/api/admin/clients")
+    async def list_clients(admin=Depends(require_admin)) -> list[dict]:
+        return [c.as_dict() for c in db.list_clients()]
+
+    @app.post("/api/admin/clients")
+    async def create_client(body: ClientCreateIn, admin=Depends(require_admin)):
         try:
-            content, content_type = db.export_measurements(profile_id, format)
+            client = db.create_client(
+                full_name=body.full_name,
+                document=body.document,
+                birthdate=body.birthdate,
+                sex=body.sex,
+                height_cm=body.height_cm,
+                algorithm=body.algorithm,
+                pin=body.pin,
+                accepted_terms=body.accepted_terms,
+            )
+        except InvalidClient as exc:
+            return JSONResponse(status_code=422, content={"error": str(exc)})
+        return client.as_dict()
+
+    @app.put("/api/admin/clients/{client_id}")
+    async def update_client(client_id: int, body: ClientIn, admin=Depends(require_admin)):
+        try:
+            client = db.update_client(
+                client_id,
+                full_name=body.full_name,
+                document=body.document,
+                birthdate=body.birthdate,
+                sex=body.sex,
+                height_cm=body.height_cm,
+                algorithm=body.algorithm,
+            )
+        except InvalidClient as exc:
+            return JSONResponse(status_code=422, content={"error": str(exc)})
+        return client.as_dict()
+
+    @app.post("/api/admin/clients/{client_id}/reset-pin")
+    async def reset_client_pin(client_id: int, body: PinResetIn, admin=Depends(require_admin)):
+        try:
+            db.reset_client_pin(client_id, body.new_pin)
+        except InvalidClient as exc:
+            return JSONResponse(status_code=422, content={"error": str(exc)})
+        return {"ok": True}
+
+    @app.delete("/api/admin/clients/{client_id}")
+    async def delete_client(client_id: int, admin=Depends(require_admin)) -> dict:
+        db.delete_client(client_id)
+        return {"ok": True}
+
+    @app.get("/api/admin/clients/{client_id}/measurements")
+    async def list_measurements(client_id: int, limit: int = 200, admin=Depends(require_admin)) -> list[dict]:
+        return db.list_measurements(client_id, limit=limit)
+
+    @app.get("/api/admin/clients/{client_id}/measurements/export")
+    async def export_measurements(client_id: int, format: str = "csv", admin=Depends(require_admin)):
+        try:
+            content, content_type = db.export_measurements(client_id, format)
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"error": str(exc)})
         extension = "json" if format == "json" else "csv"
         return PlainTextResponse(
             content,
             media_type=content_type,
-            headers={"Content-Disposition": f'attachment; filename="profile-{profile_id}.{extension}"'},
+            headers={"Content-Disposition": f'attachment; filename="client-{client_id}.{extension}"'},
         )
 
-    # -- Confirmação manual de perfil ambíguo (RF08) -------------------------
+    @app.get("/api/admin/clients/{client_id}/measurements/{measurement_id}/report")
+    async def get_measurement_report(client_id: int, measurement_id: int, admin=Depends(require_admin)):
+        client = db.get_client(client_id)
+        measurement = db.get_measurement(measurement_id)
+        if client is None or measurement is None or measurement["client_id"] != client_id:
+            return JSONResponse(status_code=404, content={"error": "medição não encontrada"})
+        if measurement.get("bmi") is None:
+            # medição só de peso (sem impedância válida) — não há relatório de composição corporal pra gerar
+            return JSONResponse(status_code=404, content={"error": "esta medição não tem dados de composição corporal"})
 
-    @app.post("/api/measurements/confirm")
-    async def confirm_measurement(body: ConfirmIn):
-        reading = pending_readings.pop(body.pending_id, None)
-        if reading is None:
-            return JSONResponse(status_code=404, content={"error": "pending_id não encontrado ou já resolvido"})
+        path = report_path_for(measurement_id)
+        if not path.exists():
+            # medição de antes deste recurso existir, ou a geração em segundo plano falhou — gera agora
+            pdf_bytes = await asyncio.to_thread(generate_measurement_report, client, measurement)
+        else:
+            pdf_bytes = await asyncio.to_thread(path.read_bytes)
 
-        if body.profile_id is None:
-            await manager.broadcast(
-                {
-                    "type": "final",
-                    "mac_address": reading.mac_address,
-                    "weight_kg": reading.weight_kg,
-                    "unit": reading.unit,
-                    "profile": None,
-                    "is_guest": True,
-                    "algorithm": None,
-                    "metrics": None,
-                    "warning": None,
-                }
-            )
-            return {"ok": True}
-
-        profile = db.get_profile(body.profile_id)
-        if profile is None:
-            return JSONResponse(status_code=404, content={"error": f"perfil {body.profile_id} não existe"})
-
-        metrics, warning, persist = _compute_for_profile(profile, reading)
-        if persist:
-            db.insert_measurement(
-                profile_id=profile.id,
-                weight_kg=reading.weight_kg,
-                unit=reading.unit,
-                impedance_ohm=reading.impedance_ohm,
-                algorithm=profile.algorithm,
-                metrics=metrics,
-            )
-        await manager.broadcast(
-            {
-                "type": "final",
-                "mac_address": reading.mac_address,
-                "weight_kg": reading.weight_kg,
-                "unit": reading.unit,
-                "profile": profile.as_dict(),
-                "is_guest": False,
-                "algorithm": profile.algorithm,
-                "metrics": metrics,
-                "warning": warning,
-            }
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="relatorio-{client_id}-{measurement_id}.pdf"'},
         )
+
+    # -- Fotos de evolução ("antes e depois") ---------------------------------
+
+    @app.get("/api/admin/clients/{client_id}/photos")
+    async def list_photos(client_id: int, admin=Depends(require_admin)) -> list[dict]:
+        return [p.as_dict() for p in db.list_progress_photos(client_id)]
+
+    @app.post("/api/admin/clients/{client_id}/photos")
+    async def upload_photo(client_id: int, file: UploadFile, admin=Depends(require_admin)):
+        if db.get_client(client_id) is None:
+            return JSONResponse(status_code=404, content={"error": f"cliente {client_id} não existe"})
+        if not (file.content_type or "").startswith("image/"):
+            return JSONResponse(status_code=422, content={"error": "o arquivo precisa ser uma imagem"})
+
+        content = await file.read()
+        if len(content) > MAX_PHOTO_BYTES:
+            return JSONResponse(status_code=422, content={"error": "imagem maior que 8 MB"})
+
+        client_dir = PHOTOS_DIR / str(client_id)
+        client_dir.mkdir(parents=True, exist_ok=True)
+        extension = Path(file.filename or "").suffix or ".jpg"
+        disk_path = client_dir / f"{uuid.uuid4().hex}{extension}"
+        disk_path.write_bytes(content)
+
+        photo = db.add_progress_photo(
+            client_id=client_id, file_path=str(disk_path), content_type=file.content_type
+        )
+        return photo.as_dict()
+
+    @app.get("/api/admin/clients/{client_id}/photos/{photo_id}/file")
+    async def get_photo_file(client_id: int, photo_id: int, admin=Depends(require_admin)):
+        photo = db.get_progress_photo(photo_id)
+        if photo is None or photo.client_id != client_id:
+            return JSONResponse(status_code=404, content={"error": "foto não encontrada"})
+        disk_path = Path(photo.file_path)
+        if not disk_path.exists():
+            return JSONResponse(status_code=404, content={"error": "arquivo da foto não encontrado no disco"})
+        return FileResponse(disk_path, media_type=photo.content_type)
+
+    @app.delete("/api/admin/clients/{client_id}/photos/{photo_id}")
+    async def delete_photo(client_id: int, photo_id: int, admin=Depends(require_admin)) -> dict:
+        photo = db.get_progress_photo(photo_id)
+        if photo is not None and photo.client_id == client_id:
+            Path(photo.file_path).unlink(missing_ok=True)
+            db.delete_progress_photo(photo_id)
         return {"ok": True}
 
-    # -- WebSocket ------------------------------------------------------------
+    # -- WebSocket (quiosque) ---------------------------------------------------
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -361,5 +564,9 @@ def create_app(db_path: Path = DB_PATH, *, desktop_notifications: bool = True) -
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(WEB_DIR / "index.html")
+
+    @app.get("/admin")
+    async def admin_page() -> FileResponse:
+        return FileResponse(WEB_DIR / "admin.html")
 
     return app

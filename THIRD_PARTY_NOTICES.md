@@ -60,10 +60,14 @@ relação ao original:
 - Mesma troca de `exit()`/validação por `OutOfRangeReading` do modo Xiaomi.
 - Constantes numéricas e lógica de clamp mantidas inalteradas.
 
-`app/matching.py` (RF08) é uma reimplementação enxuta da ideia do
+`app/matching.py` é uma reimplementação enxuta da ideia do
 `NearestWeightFilter` de `custom_components/bodymiscale/profile.py` —
-mesmo algoritmo (peso mais próximo dentro de uma tolerância, empate exige
-confirmação manual), reescrito sem a dependência do Home Assistant.
+mesmo algoritmo (distância até o último peso conhecido, dentro de uma
+tolerância), reescrito sem a dependência do Home Assistant. Adaptado para
+o motor de sugestão do PRD de cadastro/autenticação (RF04): em vez de
+autoatribuir a medição a um único perfil, retorna até 3 candidatos para o
+cliente escolher e confirmar com PIN — a decisão de identidade nunca é
+automática nesse fluxo.
 
 `app/engine/body_score.py` (PRD seção 13, sugestão 1) é um port de
 `metrics/body_score.py` e `metrics/scale.py` — as oito funções de penalidade
@@ -111,3 +115,31 @@ Se algum desses for necessário no futuro, os caminhos razoáveis são: (a)
 aceitar GPL-3.0 para um módulo opcional isolado que só cuida dessa
 integração, ou (b) reverse-engineering independente direto do tráfego BLE
 da balança / do formato de arquivo, sem consultar o código do openScale.
+
+## Sistema de cadastro e autenticação — decisões de produto
+
+O PRD de cadastro/login (CPF ou telefone + PIN, quiosque, painel
+administrativo) substituiu o sistema de perfis das Fases 1–3. Três pontos
+do PRD original foram implementados de forma diferente do especificado,
+por decisão explícita do dono do produto (não por limitação técnica):
+
+- **RF05 (recuperação de PIN por SMS/WhatsApp) → reset manual pelo admin.**
+  Integrar um provedor de SMS/WhatsApp (Twilio, Zenvia, WhatsApp Business
+  API) tem custo recorrente, exige credenciais de uma conta de terceiros e
+  quebraria a operação 100% offline do resto do app. `POST
+  /api/admin/clients/{id}/reset-pin` cobre o mesmo caso de uso (cliente
+  esqueceu o PIN) sem nenhuma dessas dependências.
+- **RNF02 (criptografia em repouso) → adiado, documentado como
+  pendência.** `miscale.db` fica em SQLite comum, sem criptografia. Uma
+  implementação futura provavelmente usaria SQLCipher (troca de driver,
+  chave de criptografia gerenciada localmente) — não implementado ainda.
+  Até lá, o controle de acesso é físico: restrinja quem chega perto do
+  computador que roda o servidor.
+- **RF01/RF03 (teclado numérico virtual na tela) → teclado físico USB.**
+  O hardware real é um teclado numérico USB plugado no computador do
+  servidor, não uma tela touch — então não existe teclado virtual
+  desenhado na página; os campos de CPF/telefone e PIN recebem o evento de
+  teclado físico normalmente. Como consequência, o cadastro de cliente
+  (RF02) — que precisa de um campo de texto para o nome completo — não
+  acontece no quiosque público, e sim no painel administrativo (`/admin`),
+  a única tela pensada para mouse e teclado completo.

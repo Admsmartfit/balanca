@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MiScale Analytics — Administração</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+</head>
+<body>
+  <!-- ======= Login ======= -->
+  <section id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card">
+      <h1>Painel administrativo</h1>
+      <p class="lede">MiScale Analytics Desktop</p>
+      <label>
+        E-mail
+        <input type="email" id="login-email" required autocomplete="username" />
+      </label>
+      <label>
+        Senha
+        <input type="password" id="login-password" required autocomplete="current-password" />
+      </label>
+      <button type="submit">Entrar</button>
+      <span class="error" id="login-error"></span>
+      <p class="hint">Sem conta ainda? No computador do servidor, rode <code>python main.py --create-admin</code>.</p>
+    </form>
+  </section>
+
+  <!-- ======= Painel ======= -->
+  <div id="app-screen" class="app-screen" hidden>
+    <header class="topbar">
+      <h1>MiScale Analytics — Administração</h1>
+      <div class="topbar-right">
+        <span id="admin-email"></span>
+        <button id="logout-btn" class="ghost-btn">Sair</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Clientes</h2>
+          <button id="new-client-btn" class="primary-btn">+ Novo cliente</button>
+        </div>
+        <div class="table-wrap">
+          <table id="clients-table">
+            <thead>
+              <tr>
+                <th>Nome</th><th>Documento</th><th>Idade</th><th>Sexo</th><th>Altura</th><th>Algoritmo</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="clients-tbody"></tbody>
+          </table>
+        </div>
+        <p class="empty-hint" id="clients-empty" hidden>Nenhum cliente cadastrado ainda.</p>
+      </section>
+
+      <!-- ======= Formulário de cliente (criar/editar) ======= -->
+      <section class="panel" id="client-form-panel" hidden>
+        <div class="panel-header">
+          <h2 id="client-form-title">Novo cliente</h2>
+        </div>
+        <form id="client-form">
+          <input type="hidden" id="client-id" />
+          <div class="form-grid">
+            <label>
+              Nome completo
+              <input type="text" id="client-name" required maxlength="120" />
+            </label>
+            <label>
+              CPF ou telefone
+              <input type="text" id="client-document" required maxlength="15" placeholder="só números" />
+            </label>
+            <label>
+              Data de nascimento
+              <input type="date" id="client-birthdate" required />
+            </label>
+            <label>
+              Sexo biológico
+              <select id="client-sex">
+                <option value="male">Masculino</option>
+                <option value="female">Feminino</option>
+              </select>
+            </label>
+            <label>
+              Altura (cm)
+              <input type="number" id="client-height" min="100" max="220" required />
+            </label>
+            <label>
+              Algoritmo
+              <select id="client-algorithm">
+                <option value="xiaomi">Xiaomi / Zepp Life</option>
+                <option value="science">Científico</option>
+              </select>
+            </label>
+            <label id="client-pin-field">
+              PIN inicial (4 dígitos)
+              <input type="text" id="client-pin" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" />
+            </label>
+          </div>
+          <label class="checkbox-row" id="client-terms-row">
+            <input type="checkbox" id="client-terms" />
+            O cliente foi informado e aceitou o uso dos seus dados de saúde (peso, composição corporal) para esta avaliação, conforme a LGPD.
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary-btn">Salvar</button>
+            <button type="button" id="client-form-cancel" class="ghost-btn">Cancelar</button>
+          </div>
+          <span class="error" id="client-form-error"></span>
+        </form>
+      </section>
+
+      <!-- ======= Histórico de um cliente ======= -->
+      <section class="panel" id="history-panel" hidden>
+        <div class="panel-header">
+          <h2 id="history-title">Histórico</h2>
+          <div class="history-actions">
+            <a id="export-csv" href="#" target="_blank">Exportar CSV</a>
+            <a id="export-json" href="#" target="_blank">Exportar JSON</a>
+            <button id="history-close" class="ghost-btn">Fechar</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="history-table">
+            <thead><tr><th>Data</th><th>Peso</th><th>IMC</th><th>Gordura</th><th>Body Score</th><th></th></tr></thead>
+            <tbody id="history-tbody"></tbody>
+          </table>
+        </div>
+        <p class="empty-hint" id="history-empty" hidden>Sem medições registradas ainda.</p>
+
+        <div class="photos-section">
+          <div class="panel-header">
+            <h3>Fotos de evolução</h3>
+            <label class="photo-upload-btn">
+              + Adicionar foto
+              <input type="file" id="photo-input" accept="image/*" capture="environment" hidden />
+            </label>
+          </div>
+          <div class="photo-grid" id="photo-grid"></div>
+          <p class="empty-hint" id="photos-empty" hidden>Nenhuma foto ainda.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======= Visualização de foto ======= -->
+  <div id="photo-modal" class="modal" hidden>
+    <div class="modal-card photo-modal-card">
+      <img id="photo-modal-img" alt="Foto de evolução" />
+      <div class="form-actions">
+        <button type="button" id="photo-modal-delete" class="ghost-btn danger-btn">Excluir</button>
+        <button type="button" id="photo-modal-close" class="ghost-btn">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======= Modal de reset de PIN ======= -->
+  <div id="pin-modal" class="modal" hidden>
+    <form id="pin-modal-form" class="modal-card">
+      <h3>Resetar PIN</h3>
+      <p class="lede" id="pin-modal-name"></p>
+      <label>
+        Novo PIN (4 dígitos)
+        <input type="text" id="pin-modal-value" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required />
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary-btn">Confirmar</button>
+        <button type="button" id="pin-modal-cancel" class="ghost-btn">Cancelar</button>
+      </div>
+      <span class="error" id="pin-modal-error"></span>
+    </form>
+  </div>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>

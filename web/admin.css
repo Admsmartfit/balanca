@@ -1,0 +1,245 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #262b36;
+  --ink: #e8eaf0;
+  --ink-muted: #8b91a3;
+  --accent: #5eead4;
+  --warn: #f5a524;
+  --bad: #f87171;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; background: var(--bg); color: var(--ink); min-height: 100vh; }
+
+[hidden] { display: none !important; }
+
+input, select, button { font-family: inherit; }
+
+/* ======= Login ======= */
+
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-card h1 { font-size: 18px; margin: 0; }
+.login-card .lede { margin: -8px 0 6px; color: var(--ink-muted); font-size: 13px; }
+
+.login-card label, .form-grid label, .modal-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.login-card input, .form-grid input, .form-grid select, .modal-card input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+button { cursor: pointer; }
+
+.primary-btn {
+  background: var(--accent);
+  color: #0f1115;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ghost-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--ink-muted);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 13.5px;
+}
+.ghost-btn:hover { border-color: var(--bad); color: var(--bad); }
+
+.error { min-height: 16px; color: var(--bad); font-size: 13px; }
+.hint { font-size: 12px; color: var(--ink-muted); margin: 6px 0 0; }
+.hint code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+
+/* ======= Layout do painel ======= */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 32px;
+  border-bottom: 1px solid var(--border);
+}
+.topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--ink-muted); }
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px 32px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+}
+.panel-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.panel-header h2 { margin: 0; font-size: 15px; }
+
+/* ======= Tabela ======= */
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--ink-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+tbody tr:hover { background: rgba(255,255,255,0.02); }
+.row-actions { display: flex; gap: 6px; }
+.row-actions button {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.row-actions button.danger { color: var(--bad); border-color: var(--bad); }
+.empty-hint { color: var(--ink-muted); font-size: 13px; text-align: center; margin: 12px 0 0; }
+
+/* ======= Formulário de cliente ======= */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-top: 16px;
+  line-height: 1.5;
+}
+.checkbox-row input { width: 16px; height: 16px; margin-top: 2px; flex: none; }
+.form-actions { display: flex; gap: 10px; margin-top: 18px; }
+
+/* ======= Histórico ======= */
+
+.history-actions { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+.history-actions a { color: var(--accent); text-decoration: none; }
+.history-actions a:hover { text-decoration: underline; }
+
+/* ======= Modal ======= */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 10;
+}
+.modal-card {
+  width: 100%;
+  max-width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal-card h3 { margin: 0; font-size: 16px; }
+.modal-card .lede { margin: 0; color: var(--ink-muted); font-size: 13px; }
+.danger-btn:hover { border-color: var(--bad); color: var(--bad); }
+
+/* ======= Relatório em PDF (link na tabela de histórico) ======= */
+
+.pdf-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+}
+.pdf-link:hover { border-color: var(--accent); }
+
+/* ======= Fotos de evolução ======= */
+
+.photos-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.photos-section .panel-header { margin-bottom: 14px; }
+.photos-section h3 { margin: 0; font-size: 14px; }
+
+.photo-upload-btn {
+  background: var(--accent);
+  color: #0f1115;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+.photo-thumb {
+  aspect-ratio: 3 / 4;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  position: relative;
+  background: var(--bg);
+}
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-thumb .photo-date {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 4px 6px;
+  font-size: 10px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+}
+
+.photo-modal-card { max-width: 420px; }
+.photo-modal-card img { width: 100%; border-radius: 8px; max-height: 60vh; object-fit: contain; background: var(--bg); }

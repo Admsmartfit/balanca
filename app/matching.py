@@ -1,63 +1,35 @@
-"""Identificação automática de perfil por peso mais próximo (RF08).
+"""Motor de sugestão por peso — RF04 do PRD de cadastro/autenticação.
 
-Reimplementação enxuta da ideia de ``NearestWeightFilter`` do
-``vendor/dckiller51_bodymiscale/.../profile.py`` (Apache-2.0): compara o peso
-medido com o último peso conhecido de cada perfil e escolhe o mais próximo,
-dentro de uma tolerância; empate ou nenhum perfil dentro da tolerância exige
-confirmação manual.
+Sugere até N clientes cujo último peso registrado esteja dentro de uma
+tolerância do peso atual da balança, para exibir como atalho de login no
+quiosque (a pessoa toca no nome sugerido em vez de digitar o documento
+inteiro no teclado numérico). A confirmação de identidade continua sendo
+sempre o PIN — a sugestão só acelera achar o cartão certo, nunca autentica
+sozinha.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum, auto
+from .db import Client
 
-from .db import Profile
-
-DEFAULT_TOLERANCE_KG = 5.0
+DEFAULT_TOLERANCE_KG = 2.0
+DEFAULT_LIMIT = 3
 
 
-class MatchStatus(Enum):
-    MATCHED = auto()
-    AMBIGUOUS = auto()
-    NO_MATCH = auto()
-    NO_PROFILES = auto()
-
-
-@dataclass(frozen=True, slots=True)
-class MatchResult:
-    status: MatchStatus
-    profile: Profile | None = None
-    candidates: tuple[Profile, ...] = ()
-
-
-def match_profile(
-    profiles: list[Profile],
-    last_weight_by_profile: dict[int, float],
+def suggest_clients_by_weight(
+    clients: list[Client],
+    last_weight_by_client: dict[int, float],
     measured_weight_kg: float,
     *,
     tolerance_kg: float = DEFAULT_TOLERANCE_KG,
-) -> MatchResult:
-    if not profiles:
-        return MatchResult(status=MatchStatus.NO_PROFILES)
-
-    if len(profiles) == 1:
-        return MatchResult(status=MatchStatus.MATCHED, profile=profiles[0])
-
+    limit: int = DEFAULT_LIMIT,
+) -> list[Client]:
+    """Retorna até `limit` clientes com histórico de peso próximo, do mais perto ao mais longe."""
     candidates = [
-        (abs(last_weight_by_profile[p.id] - measured_weight_kg), p)
-        for p in profiles
-        if p.id in last_weight_by_profile
+        (abs(last_weight_by_client[client.id] - measured_weight_kg), client)
+        for client in clients
+        if client.id in last_weight_by_client
+        and abs(last_weight_by_client[client.id] - measured_weight_kg) <= tolerance_kg
     ]
-    if not candidates:
-        return MatchResult(status=MatchStatus.NO_MATCH, candidates=tuple(profiles))
-
-    best_distance = min(distance for distance, _ in candidates)
-    if best_distance > tolerance_kg:
-        return MatchResult(status=MatchStatus.NO_MATCH, candidates=tuple(profiles))
-
-    tied = tuple(p for distance, p in candidates if distance == best_distance)
-    if len(tied) > 1:
-        return MatchResult(status=MatchStatus.AMBIGUOUS, candidates=tied)
-
-    return MatchResult(status=MatchStatus.MATCHED, profile=tied[0])
+    candidates.sort(key=lambda pair: pair[0])
+    return [client for _, client in candidates[:limit]]

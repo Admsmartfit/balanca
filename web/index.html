@@ -3,12 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MiScale Analytics Desktop</title>
+  <title>MiScale Analytics — Quiosque</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+  <div class="bg-grid" aria-hidden="true"></div>
+
   <header class="topbar">
-    <h1>MiScale Analytics Desktop</h1>
+    <h1>MiScale Analytics</h1>
     <div class="ble-status" id="ble-status" data-state="connecting">
       <span class="dot"></span>
       <span class="label">conectando…</span>
@@ -16,96 +21,299 @@
   </header>
 
   <main>
-    <section class="confirm-banner" id="confirm-banner" hidden>
-      <p>Pesagem de <strong id="confirm-weight">--</strong> kg — de quem é?</p>
-      <div class="confirm-options" id="confirm-options"></div>
-    </section>
+    <!-- ======= Tela de descanso / mídia (nenhuma interação recente) ======= -->
+    <section id="screen-attract" class="screen screen-wide">
+      <svg class="attract-hex attract-hex-1" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,3 93,27 93,73 50,97 7,73 7,27" /></svg>
+      <svg class="attract-hex attract-hex-2" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,3 93,27 93,73 50,97 7,73 7,27" /></svg>
+      <svg class="attract-hex attract-hex-3" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,3 93,27 93,73 50,97 7,73 7,27" /></svg>
 
-    <section class="weight-card">
-      <div class="weight-value">
-        <span id="weight-value">--.-</span>
-        <span class="unit" id="weight-unit">kg</span>
-      </div>
-      <div class="weight-owner" id="weight-owner"></div>
-      <div class="body-score" id="body-score" hidden>
-        <span class="body-score-value">--</span>
-        <span class="body-score-label">Body Score</span>
-      </div>
-      <div class="weight-hint" id="weight-hint">aguardando leitura da balança</div>
-    </section>
-
-    <section class="metrics-grid" id="metrics-grid">
-      <div class="metric" data-metric="bmi"><span class="metric-label">IMC</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="fat_percentage"><span class="metric-label">Gordura</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="water_percentage"><span class="metric-label">Água</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="muscle_mass_kg"><span class="metric-label">Massa muscular</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="bone_mass_kg"><span class="metric-label">Massa óssea</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="visceral_fat"><span class="metric-label">Gordura visceral</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="bmr_kcal"><span class="metric-label">BMR</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="protein_percentage"><span class="metric-label">Proteína</span><span class="metric-value">--</span></div>
-      <div class="metric" data-metric="metabolic_age"><span class="metric-label">Idade metabólica</span><span class="metric-value">--</span></div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Perfis</h2>
-      </div>
-      <ul class="profile-list" id="profile-list"></ul>
-
-      <form id="profile-form">
-        <input type="hidden" id="profile-id" value="" />
-        <label>
-          Nome
-          <input type="text" id="profile-name" required maxlength="40" />
-        </label>
-        <label>
-          Altura (cm)
-          <input type="number" id="profile-height" min="100" max="220" step="1" required />
-        </label>
-        <label>
-          Idade
-          <input type="number" id="profile-age" min="1" max="99" step="1" required />
-        </label>
-        <label>
-          Sexo
-          <select id="profile-sex">
-            <option value="male">Masculino</option>
-            <option value="female">Feminino</option>
-          </select>
-        </label>
-        <label>
-          Algoritmo
-          <select id="profile-algorithm">
-            <option value="xiaomi">Xiaomi / Zepp Life</option>
-            <option value="science">Científico</option>
-          </select>
-        </label>
-        <div class="form-actions">
-          <button type="submit" id="profile-submit">Adicionar perfil</button>
-          <button type="button" id="profile-cancel" hidden>Cancelar edição</button>
+      <div class="attract-header">
+        <div class="attract-eyebrow">
+          <span class="attract-eyebrow-dot"></span>
+          <span id="attract-eyebrow-text"></span>
         </div>
-        <span class="profile-saved" id="profile-saved"></span>
-      </form>
-    </section>
+        <div class="attract-title"><span id="attract-line1"></span><br /><span id="attract-line2"></span></div>
+      </div>
 
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Histórico</h2>
-        <div class="history-controls">
-          <select id="history-profile"></select>
-          <select id="history-metric">
-            <option value="weight_kg">Peso</option>
-            <option value="fat_percentage">Gordura %</option>
-            <option value="muscle_mass_kg">Massa muscular</option>
-          </select>
-          <a id="export-csv" href="#" target="_blank">Exportar CSV</a>
-          <a id="export-json" href="#" target="_blank">Exportar JSON</a>
+      <div class="attract-stage">
+        <div class="attract-halo" aria-hidden="true"></div>
+        <div class="attract-figure-wrap">
+          <svg class="attract-silhouette" viewBox="0 0 200 580" aria-hidden="true">
+            <circle cx="100" cy="45" r="36" />
+            <path d="M148,84 C165,90 176,110 178,140 C180,170 176,200 170,230 C166,252 162,270 160,286 C159,294 152,296 148,290 C146,282 148,270 150,255 C154,228 156,198 152,170 C149,142 142,116 132,98 C136,90 142,84 148,84 Z" />
+            <path d="M52,84 C35,90 24,110 22,140 C20,170 24,200 30,230 C34,252 38,270 40,286 C41,294 48,296 52,290 C54,282 52,270 50,255 C46,228 44,198 48,170 C51,142 58,116 68,98 C64,90 58,84 52,84 Z" />
+            <path d="M70,78 L130,78 C150,80 158,96 156,120 C154,150 146,175 140,200 C138,215 140,230 146,244 C150,255 152,268 150,280 L158,420 C160,440 158,456 152,468 L156,540 C157,552 150,562 138,562 L128,562 C120,562 116,554 116,542 L110,400 C108,320 108,260 108,230 L100,225 L92,230 C92,260 92,320 90,400 L84,542 C84,554 80,562 72,562 L62,562 C50,562 43,552 44,540 L48,468 C42,456 40,440 42,420 L50,280 C48,268 50,255 54,244 C60,230 62,215 60,200 C54,175 46,150 44,120 C42,96 50,80 70,78 Z" />
+          </svg>
+          <div class="attract-scan" aria-hidden="true"></div>
+          <div class="attract-ring attract-ring-1" aria-hidden="true"></div>
+          <div class="attract-ring attract-ring-2" aria-hidden="true"></div>
+          <div class="attract-ring attract-ring-3" aria-hidden="true"></div>
+        </div>
+
+        <div class="attract-card attract-card-l1" data-accent="cyan">
+          <div class="attract-card-label">MASSA MAGRA</div>
+          <div class="attract-card-value-row"><span>68,5</span><span class="attract-card-unit">kg</span></div>
+          <div class="attract-card-bar"><div class="attract-card-bar-fill" data-accent="cyan" style="width:72%"></div></div>
+        </div>
+        <div class="attract-card attract-card-l2" data-accent="orange">
+          <div class="attract-card-label">GORDURA CORPORAL</div>
+          <div class="attract-card-value-row"><span>18,2</span><span class="attract-card-unit">%</span></div>
+          <div class="attract-card-bar"><div class="attract-card-bar-fill" data-accent="orange" style="width:38%"></div></div>
+        </div>
+        <div class="attract-card attract-card-l3" data-accent="cyan">
+          <div class="attract-card-label">ÁGUA CORPORAL</div>
+          <div class="attract-card-value-row"><span>55,3</span><span class="attract-card-unit">%</span></div>
+          <div class="attract-card-bar"><div class="attract-card-bar-fill" data-accent="cyan" style="width:55%"></div></div>
+        </div>
+
+        <div class="attract-card attract-card-r1" data-accent="purple">
+          <div class="attract-card-label">MASSA ÓSSEA</div>
+          <div class="attract-card-value-row"><span>3,2</span><span class="attract-card-unit">kg</span></div>
+          <div class="attract-card-bar"><div class="attract-card-bar-fill" data-accent="purple" style="width:64%"></div></div>
+        </div>
+        <div class="attract-card attract-card-r2" data-accent="green">
+          <div class="attract-card-label">IMC</div>
+          <div class="attract-card-value-row"><span>22,8</span><span class="attract-card-unit">normal</span></div>
+          <div class="attract-card-bar"><div class="attract-card-bar-fill" data-accent="green" style="width:46%"></div></div>
+        </div>
+        <div class="attract-card attract-card-r3" data-accent="purple">
+          <div class="attract-card-label">SCORE CORPORAL</div>
+          <div class="attract-card-value-row"><span>85</span><span class="attract-card-unit">/100</span></div>
+          <div class="attract-card-bar"><div class="attract-card-bar-fill" data-accent="purple" style="width:85%"></div></div>
         </div>
       </div>
-      <svg id="trend-chart" viewBox="0 0 640 200" preserveAspectRatio="none"></svg>
-      <p class="history-empty" id="history-empty">sem medições ainda</p>
+
+      <div class="attract-footer">
+        <div class="attract-arrow" aria-hidden="true">▼</div>
+        <div class="attract-cta">
+          <span class="attract-cta-dot"></span>
+          <span id="attract-cta-text"></span>
+        </div>
+        <div class="attract-tiles" id="attract-tiles"></div>
+        <div class="attract-status-row">
+          <div class="attract-clock"><span id="attract-time"></span><span id="attract-date"></span></div>
+          <div class="attract-calibrated"><span class="attract-calibrated-dot"></span><span>EQUIPAMENTO CALIBRADO</span></div>
+        </div>
+        <div class="attract-tick-track"><div class="attract-tick" aria-hidden="true"></div></div>
+      </div>
+    </section>
+
+    <!-- ======= Tela de identificação (ninguém autenticado) ======= -->
+    <section id="screen-idle" class="screen" hidden>
+      <div class="id-card">
+        <p class="id-hint">Digite seu CPF ou telefone no teclado numérico</p>
+        <div class="id-display" id="id-display">
+          <span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span><span class="id-digit">_</span>
+        </div>
+        <p class="id-error" id="id-error"></p>
+      </div>
+
+      <div class="suggestions" id="suggestions" hidden>
+        <p class="suggestions-title">Encontramos alguém com esse peso — é você?</p>
+        <div class="suggestion-cards" id="suggestion-cards"></div>
+      </div>
+    </section>
+
+    <!-- ======= Tela de PIN ======= -->
+    <section id="screen-pin" class="screen" hidden>
+      <div class="id-card">
+        <p class="id-hint" id="pin-hint">Digite seu PIN de 4 dígitos</p>
+        <div class="pin-display" id="pin-display">
+          <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+        </div>
+        <p class="id-error" id="pin-error"></p>
+        <p class="id-back">Errou? Pressione <kbd>Backspace</kbd> algumas vezes para recomeçar.</p>
+      </div>
+    </section>
+
+    <!-- ======= Tela autenticada (medição) ======= -->
+    <section id="screen-session" class="screen screen-wide" hidden>
+      <div class="session-bar">
+        <div class="session-id">
+          <div class="avatar-ring">
+            <div class="avatar-circle" id="avatar-circle">?</div>
+          </div>
+          <div class="session-id-text">
+            <span class="session-name" id="session-name"></span>
+            <span class="session-sub" id="session-sub"></span>
+          </div>
+        </div>
+        <div class="session-bar-right">
+          <span class="status-pill" id="status-pill">
+            <span class="status-dot"></span>
+            <span class="status-text" id="status-text">MEDINDO</span>
+          </span>
+          <span class="session-clock" id="session-clock"></span>
+          <button class="logout-btn" id="logout-btn">Sair</button>
+        </div>
+      </div>
+
+      <!-- ======= Orientação: aguardando subir na balança ======= -->
+      <div class="waiting-card" id="waiting-card">
+        <div class="waiting-badge">
+          <span class="waiting-badge-dot"></span>
+          <span>PASSO 1 DE 3 · BIOIMPEDÂNCIA</span>
+        </div>
+        <h2 class="waiting-title">SUBA NA BALANÇA</h2>
+        <p class="waiting-subtitle">Descalço(a), posicione <strong>um pé sobre cada par de sensores</strong>. Fique parado(a), braços soltos, e olhe para frente.</p>
+        <div class="waiting-arrow" aria-hidden="true">▼</div>
+
+        <div class="waiting-platform-wrap" aria-hidden="true">
+          <div class="waiting-ripple waiting-ripple-1"></div>
+          <div class="waiting-ripple waiting-ripple-2"></div>
+          <div class="waiting-platform">
+            <div class="waiting-sweep"></div>
+            <div class="waiting-corner waiting-corner-tl"></div>
+            <div class="waiting-corner waiting-corner-tr"></div>
+            <div class="waiting-corner waiting-corner-bl"></div>
+            <div class="waiting-corner waiting-corner-br"></div>
+            <div class="waiting-foot waiting-foot-l"></div>
+            <div class="waiting-foot waiting-foot-r"></div>
+            <div class="waiting-weight-display">
+              <span id="waiting-weight-value">– –</span>
+              <span class="waiting-weight-unit">KG</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="waiting-steps-grid">
+          <div class="waiting-step"><span class="waiting-step-num">01</span><span>Retire sapatos e meias</span></div>
+          <div class="waiting-step"><span class="waiting-step-num">02</span><span>Pés secos sobre os 4 sensores</span></div>
+          <div class="waiting-step"><span class="waiting-step-num">03</span><span>Não se apoie em nada</span></div>
+        </div>
+
+        <div class="waiting-status-bar">
+          <div class="waiting-status-row">
+            <span class="waiting-status-dot" id="waiting-status-dot"></span>
+            <span class="waiting-status-label" id="waiting-status-label">AGUARDANDO PESO</span>
+            <span class="waiting-status-hint" id="waiting-status-hint">Suba na plataforma para iniciar</span>
+          </div>
+          <div class="waiting-progress-track"><div class="waiting-progress-fill" id="waiting-progress-fill"></div></div>
+        </div>
+
+        <div class="waiting-footer">MISCALE ANALYTICS · BIA PLATFORM 01</div>
+      </div>
+
+      <!-- ======= Resultado (some até chegar a primeira leitura) ======= -->
+      <div id="session-results" hidden>
+        <!-- 3 cartões do topo -->
+        <div class="top-cards-row">
+          <div class="score-card">
+            <div class="top-card-label">PONTUAÇÃO CORPORAL</div>
+            <div class="score-value-row">
+              <span class="score-value" id="score-value-big">--</span>
+              <span class="score-max">/100</span>
+            </div>
+            <div class="score-tier" id="score-tier">—</div>
+            <div class="score-bar-vertical"><div class="score-bar-fill" id="score-bar-fill"></div></div>
+          </div>
+
+          <div class="top-card">
+            <div class="top-card-label">PESO ATUAL</div>
+            <div class="top-card-value-row">
+              <span id="weight-value">--,-</span>
+              <span class="top-card-unit" id="weight-unit">kg</span>
+            </div>
+            <span class="top-card-trend" id="weight-trend"></span>
+          </div>
+
+          <div class="top-card top-card-journey">
+            <div class="top-card-label">JORNADA</div>
+            <div class="top-card-value-row">
+              <span id="journey-weeks">--</span>
+              <span class="top-card-unit">semanas</span>
+            </div>
+            <span class="top-card-trend top-card-trend-journey" id="journey-count">primeira medição</span>
+          </div>
+        </div>
+
+        <p class="weight-hint" id="weight-hint">suba na balança</p>
+
+        <!-- 3 colunas: métricas · silhueta · métricas -->
+        <div class="bio-hero-row">
+          <div class="bio-col" id="bio-col-left"></div>
+
+          <div class="bio-silhouette-wrap">
+            <div class="bio-halo" aria-hidden="true"></div>
+            <svg class="bio-silhouette-fig" viewBox="0 0 200 580" aria-hidden="true">
+              <circle cx="100" cy="45" r="36" />
+              <path d="M148,84 C165,90 176,110 178,140 C180,170 176,200 170,230 C166,252 162,270 160,286 C159,294 152,296 148,290 C146,282 148,270 150,255 C154,228 156,198 152,170 C149,142 142,116 132,98 C136,90 142,84 148,84 Z" />
+              <path d="M52,84 C35,90 24,110 22,140 C20,170 24,200 30,230 C34,252 38,270 40,286 C41,294 48,296 52,290 C54,282 52,270 50,255 C46,228 44,198 48,170 C51,142 58,116 68,98 C64,90 58,84 52,84 Z" />
+              <path d="M70,78 L130,78 C150,80 158,96 156,120 C154,150 146,175 140,200 C138,215 140,230 146,244 C150,255 152,268 150,280 L158,420 C160,440 158,456 152,468 L156,540 C157,552 150,562 138,562 L128,562 C120,562 116,554 116,542 L110,400 C108,320 108,260 108,230 L100,225 L92,230 C92,260 92,320 90,400 L84,542 C84,554 80,562 72,562 L62,562 C50,562 43,552 44,540 L48,468 C42,456 40,440 42,420 L50,280 C48,268 50,255 54,244 C60,230 62,215 60,200 C54,175 46,150 44,120 C42,96 50,80 70,78 Z" />
+            </svg>
+            <div class="bio-scan" aria-hidden="true"></div>
+            <div class="bio-ring" aria-hidden="true"></div>
+            <div class="bio-platform-label">MISCALE · BIA</div>
+          </div>
+
+          <div class="bio-col" id="bio-col-right"></div>
+        </div>
+
+        <!-- ======= Antes / Depois (fotos ainda não implementadas — layout de prévia) ======= -->
+        <div class="compare-section">
+          <div class="compare-heading">
+            <span class="compare-title">Evolução visual</span>
+            <span class="compare-rule" aria-hidden="true"></span>
+            <span class="compare-sub">Registros do terminal</span>
+          </div>
+          <div class="compare-row">
+            <div class="compare-card">
+              <div class="compare-card-head">
+                <span class="compare-card-tag">ANTES</span>
+                <span class="compare-card-date" id="compare-before-date">—</span>
+              </div>
+              <div class="compare-photo-slot">
+                <span class="camera-icon">📷</span>
+                <span>Foto de evolução em breve</span>
+              </div>
+              <div class="compare-stats" id="compare-before-stats"></div>
+            </div>
+
+            <div class="compare-arrow">
+              <span class="compare-arrow-icon">➞</span>
+              <span class="compare-arrow-label" id="compare-weeks">— semanas</span>
+            </div>
+
+            <div class="compare-card compare-card-now">
+              <div class="compare-card-head">
+                <span class="compare-card-tag compare-card-tag-accent">DEPOIS · HOJE</span>
+                <span class="compare-card-date" id="compare-after-date">—</span>
+              </div>
+              <div class="compare-photo-slot">
+                <span class="camera-icon">📷</span>
+                <span>Foto de evolução em breve</span>
+              </div>
+              <div class="compare-stats" id="compare-after-stats"></div>
+            </div>
+          </div>
+
+          <div class="delta-badges-row" id="delta-badges-row"></div>
+        </div>
+
+        <!-- ======= Tendência histórica ======= -->
+        <div class="trend-section">
+          <div class="trend-heading">
+            <span class="trend-title">Tendência histórica</span>
+            <span class="trend-legend"><span class="trend-swatch" data-color="orange"></span>% Gordura</span>
+            <span class="trend-legend"><span class="trend-swatch" data-color="cyan"></span>Massa muscular</span>
+          </div>
+          <svg class="trend-chart" id="trend-chart" viewBox="0 0 1000 190" preserveAspectRatio="none"></svg>
+          <div class="trend-month-labels" id="trend-month-labels"></div>
+        </div>
+      </div>
+
+      <div class="page-footer">
+        <span class="footer-brand">MiScale Analytics Desktop · Bioimpedância elétrica</span>
+        <div class="countdown-pill" id="countdown-pill" hidden>
+          <span class="countdown-dot"></span>
+          <span id="countdown-text">tela libera em 30s</span>
+        </div>
+      </div>
     </section>
   </main>
+
+  <!-- input invisível que recebe o teclado numérico USB o tempo todo -->
+  <input type="text" id="hardware-input" autocomplete="off" inputmode="numeric" />
 
   <script src="/static/app.js"></script>
 </body>
