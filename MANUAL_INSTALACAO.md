@@ -162,6 +162,26 @@ Todos os cadastros e o histórico de pesagens ficam em `miscale.db`, dentro
 da pasta do programa — apague esse arquivo só se quiser começar do zero
 (perde todos os clientes cadastrados).
 
+### Trocando o texto das orientações faladas
+
+O quiosque fala instruções (ex.: "Pode subir na balança...") usando áudios
+já gravados em `web/audio/`, com voz natural — não é a voz robótica do
+computador. Se um dia quiser mudar o texto dessas falas:
+
+1. Edite o texto em `scripts/generate_voice_prompts.py` (dicionário `PROMPTS`)
+   **e** em `web/app.js` (objeto `VOICE_PROMPTS`, campo `fallbackText` — é o
+   que toca se o áudio não carregar, então mantenha os dois iguais).
+2. No computador que tem internet (não precisa ser o do quiosque), rode:
+   ```powershell
+   .venv\Scripts\python.exe -m pip install gTTS
+   .venv\Scripts\python.exe scripts/generate_voice_prompts.py
+   ```
+3. Copie os `.mp3` novos de `web/audio/` pro quiosque, se for um computador
+   diferente do que você usou pra gerar.
+
+O quiosque em si nunca precisa de internet para falar — só esse passo de
+gerar os áudios de novo, que é raro.
+
 ## Perguntas e problemas comuns
 
 **"python não é reconhecido como comando" mesmo depois de instalar**

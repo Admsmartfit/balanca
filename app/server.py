@@ -31,12 +31,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
@@ -46,6 +57,7 @@ from .config import ROOT_DIR, WEB_DIR, load_config
 from .db import DB_PATH, Client, Database, InvalidClient
 from .engine import BodyMetricsInput, OutOfRangeReading, Range, compute_body_score, compute_metrics, reference_ranges_for
 from .matching import suggest_clients_by_weight
+from .photos import InvalidImage, save_photo
 from .report import generate_and_save_report, generate_measurement_report, report_path_for
 from .security import ADMIN_SESSION_COOKIE, ADMIN_SESSION_TTL_SECONDS, AdminSessionStore, verify_password
 
@@ -57,6 +69,12 @@ IDLE_SUGGESTION_MIN_KG = 10.0
 IDLE_SUGGESTION_MAX_KG = 200.0
 PHOTOS_DIR = ROOT_DIR / "data" / "photos"
 MAX_PHOTO_BYTES = 8 * 1024 * 1024
+
+# -- Fotometria corporal (PRD v3 — Etapa 1: fundação) ------------------------
+PoseType = Literal["front", "side", "back"]
+POSE_TYPES: tuple[PoseType, ...] = ("front", "side", "back")
+CAPTURE_TOTAL_TIMEOUT_SECONDS = 120  # prazo total da fase capturing, renovado por foto/heartbeat
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "testclient"}  # "testclient" é o host sintético do TestClient da Starlette
 
 
 class ConnectionManager:
@@ -87,6 +105,10 @@ class KioskSession:
     authenticated_at: float
     last_activity: float
     last_weight_seen: float | None = None
+    phase: Literal["measuring", "photo_prompt", "capturing", "results"] = "measuring"
+    measurement_id: int | None = None
+    capture_deadline: float | None = None
+    poses_done: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +135,7 @@ class ClientIn(BaseModel):
     sex: str
     height_cm: float = Field(ge=100, le=220)
     algorithm: str = "xiaomi"
+    photo_consent: bool = False  # consentimento de imagem (LGPD art. 11) — separado dos termos gerais
 
 
 class ClientCreateIn(ClientIn):
@@ -127,6 +150,14 @@ class PinResetIn(BaseModel):
 class AdminLoginIn(BaseModel):
     email: str
     password: str
+
+
+class PhotoPromptAnswerIn(BaseModel):
+    accepted: bool
+
+
+class SettingsIn(BaseModel):
+    photo_prompt_min_days: int = Field(ge=0, le=365)
 
 
 def _metrics_to_dict(metrics, body_score: float) -> dict:
@@ -262,19 +293,41 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
             )
             if metrics is not None:
                 asyncio.create_task(_generate_report(client.id, measurement_id))
-        await manager.broadcast(
-            {
-                "type": "final",
-                "weight_kg": reading.weight_kg,
-                "unit": reading.unit,
-                "client": client.as_dict(),
-                "algorithm": client.algorithm,
-                "metrics": metrics,
-                "ranges": ranges,
-                "measurement_id": measurement_id,
-                "warning": warning,
-            }
-        )
+
+        message = {
+            "type": "final",
+            "weight_kg": reading.weight_kg,
+            "unit": reading.unit,
+            "client": client.as_dict(),
+            "algorithm": client.algorithm,
+            "metrics": metrics,
+            "ranges": ranges,
+            "measurement_id": measurement_id,
+            "warning": warning,
+        }
+
+        # PRD v3 — Fotometria Corporal: só oferece foto com opt-in explícito (config +
+        # consentimento próprio de imagem, LGPD art. 11) e se já passou o intervalo
+        # mínimo desde a última foto (configurável pelo admin, padrão 15 dias) — sem
+        # isso o quiosque nunca sai de "measuring"/"results", igual a antes desta etapa.
+        eligible_for_photo_prompt = False
+        days_since_last_photo = None
+        if metrics is not None and config.photometry_enabled and client.has_photo_consent:
+            last_taken_at = db.latest_photo_taken_at(client.id)
+            if last_taken_at is None:
+                eligible_for_photo_prompt = True
+            else:
+                days_since_last_photo = (datetime.now(timezone.utc) - datetime.fromisoformat(last_taken_at)).days
+                eligible_for_photo_prompt = days_since_last_photo >= db.get_photo_prompt_min_days()
+
+        if eligible_for_photo_prompt:
+            session.phase = "photo_prompt"
+            session.measurement_id = measurement_id
+            message["photo_prompt"] = {"days_since_last": days_since_last_photo}
+        else:
+            session.phase = "results"
+
+        await manager.broadcast(message)
 
     async def _generate_report(client_id: int, measurement_id: int) -> None:
         """Gera o PDF do resultado em segundo plano — nunca bloqueia nem derruba a leitura da balança."""
@@ -305,7 +358,14 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
         while True:
             await asyncio.sleep(1)
             session = kiosk_session["current"]
-            if session is not None and (time.monotonic() - session.last_activity) > SESSION_TIMEOUT_SECONDS:
+            if session is None:
+                continue
+            if session.phase == "capturing":
+                # a captura tem prazo próprio (renovado por foto/heartbeat) — os 30s de
+                # inatividade não se aplicam aqui, senão a sessão morre no meio das fotos
+                if session.capture_deadline is not None and time.monotonic() > session.capture_deadline:
+                    await end_session("capture_timeout")
+            elif (time.monotonic() - session.last_activity) > SESSION_TIMEOUT_SECONDS:
                 await end_session("timeout")
 
     @asynccontextmanager
@@ -337,6 +397,17 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
         if admin is None:
             raise HTTPException(status_code=401, detail="administrador não encontrado")
         return admin
+
+    def require_kiosk_local(request: Request) -> None:
+        """As rotas de escrita da captura de fotos só valem chamadas do próprio
+        computador do quiosque — o navegador do quiosque é o único cliente
+        legítimo, e restringir por origem de rede é uma camada a mais além da
+        validação de sessão/fase (config.kiosk_local_only, padrão ligado)."""
+        if not config.kiosk_local_only:
+            return
+        host = request.client.host if request.client else None
+        if host not in _LOOPBACK_HOSTS:
+            raise HTTPException(status_code=403, detail="rota restrita ao computador do quiosque")
 
     # -- Quiosque: login por documento/sugestão + PIN (RF01, RF03, RF04) -----
 
@@ -380,6 +451,92 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
         touch_session()
         return {"ok": True}
 
+    # -- Quiosque: fotometria corporal (PRD v3 — Etapa 1: fundação) -----------
+    #
+    # Cliente e medição vêm da SESSÃO do servidor, nunca do corpo da requisição —
+    # um client_id/measurement_id mandado pelo navegador poderia apontar pra
+    # medição de outra pessoa (IDOR). Toda escrita exige sessão ativa na fase
+    # "capturing" e roda só a partir do próprio computador do quiosque.
+
+    @app.post("/api/kiosk/photo-prompt/answer", dependencies=[Depends(require_kiosk_local)])
+    async def kiosk_photo_prompt_answer(body: PhotoPromptAnswerIn) -> dict:
+        session = kiosk_session["current"]
+        if session is None or session.phase != "photo_prompt":
+            return JSONResponse(status_code=409, content={"error": "sessão não está aguardando resposta sobre foto"})
+
+        touch_session()  # a resposta conta como atividade — não deixa o timeout de 30s cair em cima
+        if body.accepted and session.measurement_id is not None:
+            session.phase = "capturing"
+            session.capture_deadline = time.monotonic() + CAPTURE_TOTAL_TIMEOUT_SECONDS
+            session.poses_done = set()
+            await manager.broadcast(
+                {"type": "capture_started", "poses": list(POSE_TYPES), "deadline_seconds": CAPTURE_TOTAL_TIMEOUT_SECONDS}
+            )
+        else:
+            session.phase = "results"
+            await manager.broadcast({"type": "photo_prompt_declined"})
+        return {"phase": session.phase}
+
+    @app.post("/api/kiosk/capture/photo", dependencies=[Depends(require_kiosk_local)])
+    async def kiosk_capture_photo(pose: PoseType, file: UploadFile):
+        session = kiosk_session["current"]
+        if session is None or session.phase != "capturing" or session.measurement_id is None:
+            return JSONResponse(status_code=409, content={"error": "sessão não está em fase de captura de fotos"})
+
+        if not (file.content_type or "").startswith("image/"):
+            return JSONResponse(status_code=422, content={"error": "o arquivo precisa ser uma imagem"})
+        content = await file.read()
+        if len(content) > MAX_PHOTO_BYTES:
+            return JSONResponse(status_code=422, content={"error": "imagem maior que 8 MB"})
+
+        client_dir = PHOTOS_DIR / str(session.client_id) / str(session.measurement_id)
+        try:
+            saved = await asyncio.to_thread(save_photo, content, directory=client_dir, basename=pose)
+        except InvalidImage:
+            return JSONResponse(status_code=422, content={"error": "o arquivo enviado não é uma imagem válida"})
+
+        photo, old_paths = db.upsert_measurement_photo(
+            client_id=session.client_id,
+            measurement_id=session.measurement_id,
+            pose_type=pose,
+            file_path=str(saved.file_path),
+            thumb_path=str(saved.thumb_path),
+            content_type=saved.content_type,
+        )
+        for old_path in old_paths:  # repetir uma pose substitui a anterior — não deixa lixo no disco
+            Path(old_path).unlink(missing_ok=True)
+
+        session.poses_done.add(pose)
+        session.capture_deadline = time.monotonic() + CAPTURE_TOTAL_TIMEOUT_SECONDS  # renova o prazo a cada foto
+        return photo.as_dict()
+
+    @app.post("/api/kiosk/capture/heartbeat", dependencies=[Depends(require_kiosk_local)])
+    async def kiosk_capture_heartbeat() -> dict:
+        session = kiosk_session["current"]
+        if session is not None and session.phase == "capturing":
+            session.capture_deadline = time.monotonic() + CAPTURE_TOTAL_TIMEOUT_SECONDS
+        return {"ok": True}
+
+    @app.post("/api/kiosk/capture/finish", dependencies=[Depends(require_kiosk_local)])
+    async def kiosk_capture_finish() -> dict:
+        session = kiosk_session["current"]
+        if session is not None and session.phase == "capturing":
+            session.phase = "results"
+        return {"ok": True}
+
+    @app.get("/api/kiosk/photos/{photo_id}")
+    async def kiosk_get_photo(photo_id: int, size: Literal["full", "thumb"] = "full"):
+        session = kiosk_session["current"]
+        if session is None:
+            return JSONResponse(status_code=404, content={"error": "sem sessão ativa"})
+        photo = db.get_progress_photo(photo_id)
+        if photo is None or photo.client_id != session.client_id:
+            return JSONResponse(status_code=404, content={"error": "foto não encontrada"})
+        disk_path = Path(photo.thumb_path) if (size == "thumb" and photo.thumb_path) else Path(photo.file_path)
+        if not disk_path.exists():
+            return JSONResponse(status_code=404, content={"error": "arquivo da foto não encontrado no disco"})
+        return FileResponse(disk_path, media_type=photo.content_type)
+
     # -- Administração: login por e-mail/senha (RF07 — RBAC) ------------------
 
     @app.post("/api/admin/login")
@@ -410,6 +567,17 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
     async def admin_me(admin=Depends(require_admin)) -> dict:
         return {"id": admin.id, "email": admin.email}
 
+    # -- Configurações (editáveis em runtime, sem reiniciar o servidor) -------
+
+    @app.get("/api/admin/settings")
+    async def get_settings(admin=Depends(require_admin)) -> dict:
+        return {"photo_prompt_min_days": db.get_photo_prompt_min_days()}
+
+    @app.put("/api/admin/settings")
+    async def update_settings(body: SettingsIn, admin=Depends(require_admin)) -> dict:
+        db.set_photo_prompt_min_days(body.photo_prompt_min_days)
+        return {"photo_prompt_min_days": db.get_photo_prompt_min_days()}
+
     # -- Clientes (CRUD administrativo) ---------------------------------------
 
     @app.get("/api/admin/clients")
@@ -428,6 +596,7 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
                 algorithm=body.algorithm,
                 pin=body.pin,
                 accepted_terms=body.accepted_terms,
+                photo_consent=body.photo_consent,
             )
         except InvalidClient as exc:
             return JSONResponse(status_code=422, content={"error": str(exc)})
@@ -444,6 +613,7 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
                 sex=body.sex,
                 height_cm=body.height_cm,
                 algorithm=body.algorithm,
+                photo_consent=body.photo_consent,
             )
         except InvalidClient as exc:
             return JSONResponse(status_code=422, content={"error": str(exc)})
@@ -519,14 +689,20 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
         if len(content) > MAX_PHOTO_BYTES:
             return JSONResponse(status_code=422, content={"error": "imagem maior que 8 MB"})
 
+        # só o content_type que o navegador manda não garante que o conteúdo seja uma
+        # imagem de verdade — save_photo decodifica com Pillow, recodifica sem EXIF e
+        # gera a miniatura (mesmo caminho da captura do quiosque)
         client_dir = PHOTOS_DIR / str(client_id)
-        client_dir.mkdir(parents=True, exist_ok=True)
-        extension = Path(file.filename or "").suffix or ".jpg"
-        disk_path = client_dir / f"{uuid.uuid4().hex}{extension}"
-        disk_path.write_bytes(content)
+        try:
+            saved = await asyncio.to_thread(save_photo, content, directory=client_dir)
+        except InvalidImage:
+            return JSONResponse(status_code=422, content={"error": "o arquivo enviado não é uma imagem válida"})
 
         photo = db.add_progress_photo(
-            client_id=client_id, file_path=str(disk_path), content_type=file.content_type
+            client_id=client_id,
+            file_path=str(saved.file_path),
+            thumb_path=str(saved.thumb_path),
+            content_type=saved.content_type,
         )
         return photo.as_dict()
 

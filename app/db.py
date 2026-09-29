@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS progress_photos (
 CREATE INDEX IF NOT EXISTS idx_progress_photos_client_time
     ON progress_photos(client_id, taken_at);
 """
+# `measurement_id`/`pose_type`/`thumb_path`/`source` (fotometria guiada) e
+# `clients.photo_consent_at` (LGPD) entram via `_migrate_v1_photo_columns` /
+# `_migrate_v2_photo_consent` — ALTER TABLE idempotente, não pelo CREATE TABLE
+# acima, porque este script não altera uma tabela que já existe num banco
+# real (mesmo motivo do `_migrate_legacy_schema` para `measurements`).
+_SCHEMA_VERSION = 3
+
+SETTING_PHOTO_PROMPT_MIN_DAYS = "photo_prompt_min_days"
+DEFAULT_PHOTO_PROMPT_MIN_DAYS = 15
 
 METRIC_COLUMNS = (
     "bmi",
@@ -126,10 +135,15 @@ class Client:
     sex: str
     height_cm: float
     algorithm: str
+    photo_consent_at: str | None = None
 
     @property
     def age(self) -> int:
         return _age_from_birthdate(self.birthdate)
+
+    @property
+    def has_photo_consent(self) -> bool:
+        return self.photo_consent_at is not None
 
     def as_dict(self) -> dict:
         return {
@@ -141,6 +155,7 @@ class Client:
             "sex": self.sex,
             "height_cm": self.height_cm,
             "algorithm": self.algorithm,
+            "photo_consent_at": self.photo_consent_at,
         }
 
     def as_public_dict(self) -> dict:
@@ -169,9 +184,21 @@ class ProgressPhoto:
     taken_at: str
     file_path: str
     content_type: str
+    measurement_id: int | None = None
+    pose_type: str | None = None
+    thumb_path: str | None = None
+    source: str = "admin"
 
     def as_dict(self) -> dict:
-        return {"id": self.id, "client_id": self.client_id, "taken_at": self.taken_at, "content_type": self.content_type}
+        return {
+            "id": self.id,
+            "client_id": self.client_id,
+            "taken_at": self.taken_at,
+            "content_type": self.content_type,
+            "measurement_id": self.measurement_id,
+            "pose_type": self.pose_type,
+            "source": self.source,
+        }
 
 
 def _validate_client_fields(
@@ -198,6 +225,7 @@ class Database:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        self._conn.execute("PRAGMA journal_mode = WAL")
         self._migrate_legacy_schema()
         self._conn.executescript(_SCHEMA)
         self._migrate()
@@ -242,6 +270,57 @@ class Database:
         if "body_score" not in existing:
             self._conn.execute("ALTER TABLE measurements ADD COLUMN body_score REAL")
 
+        self._conn.execute("CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER NOT NULL)")
+        meta_row = self._conn.execute("SELECT version FROM schema_meta").fetchone()
+        version = meta_row["version"] if meta_row else 0
+
+        if version < 1:
+            self._migrate_v1_photo_columns()
+        if version < 2:
+            self._migrate_v2_photo_consent()
+        if version < 3:
+            self._migrate_v3_app_settings()
+
+        if meta_row is None:
+            self._conn.execute("INSERT INTO schema_meta (version) VALUES (?)", (_SCHEMA_VERSION,))
+        elif version < _SCHEMA_VERSION:
+            self._conn.execute("UPDATE schema_meta SET version = ?", (_SCHEMA_VERSION,))
+
+    def _migrate_v1_photo_columns(self) -> None:
+        """PRD v3 Etapa 1: liga cada foto a uma medição/pose específica (fotometria guiada)."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(progress_photos)")}
+        if "measurement_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE progress_photos ADD COLUMN measurement_id INTEGER "
+                "REFERENCES measurements(id) ON DELETE SET NULL"
+            )
+        if "pose_type" not in columns:
+            self._conn.execute("ALTER TABLE progress_photos ADD COLUMN pose_type TEXT")
+        if "thumb_path" not in columns:
+            self._conn.execute("ALTER TABLE progress_photos ADD COLUMN thumb_path TEXT")
+        if "source" not in columns:
+            self._conn.execute("ALTER TABLE progress_photos ADD COLUMN source TEXT NOT NULL DEFAULT 'admin'")
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_photos_measurement_pose "
+            "ON progress_photos(measurement_id, pose_type) "
+            "WHERE measurement_id IS NOT NULL AND pose_type IS NOT NULL"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photos_client_pose ON progress_photos(client_id, pose_type, taken_at)"
+        )
+
+    def _migrate_v2_photo_consent(self) -> None:
+        """PRD v3 Etapa 1: consentimento de imagem separado do termo geral de uso (LGPD art. 11)."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(clients)")}
+        if "photo_consent_at" not in columns:
+            self._conn.execute("ALTER TABLE clients ADD COLUMN photo_consent_at TEXT")
+
+    def _migrate_v3_app_settings(self) -> None:
+        """Configurações editáveis pelo admin em runtime (sem mexer em config.json nem reiniciar o servidor)."""
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+
     def close(self) -> None:
         self._conn.close()
 
@@ -271,6 +350,7 @@ class Database:
         algorithm: str,
         pin: str,
         accepted_terms: bool,
+        photo_consent: bool = False,
     ) -> Client:
         _validate_client_fields(
             full_name=full_name, birthdate=birthdate, sex=sex, height_cm=height_cm, algorithm=algorithm
@@ -290,7 +370,10 @@ class Database:
         except sqlite3.IntegrityError as exc:
             raise InvalidClient(f"já existe um cliente cadastrado com o documento '{normalized_document}'") from exc
         self._conn.commit()
-        return self.get_client(cursor.lastrowid)  # type: ignore[return-value]
+        new_id = cursor.lastrowid
+        if photo_consent:
+            self.set_photo_consent(new_id, True)  # type: ignore[arg-type]
+        return self.get_client(new_id)  # type: ignore[return-value]
 
     def update_client(
         self,
@@ -302,6 +385,7 @@ class Database:
         sex: str,
         height_cm: float,
         algorithm: str,
+        photo_consent: bool | None = None,
     ) -> Client:
         _validate_client_fields(
             full_name=full_name, birthdate=birthdate, sex=sex, height_cm=height_cm, algorithm=algorithm
@@ -318,6 +402,8 @@ class Database:
         except sqlite3.IntegrityError as exc:
             raise InvalidClient(f"já existe um cliente cadastrado com o documento '{normalized_document}'") from exc
         self._conn.commit()
+        if photo_consent is not None:
+            self.set_photo_consent(client_id, photo_consent)
         return self.get_client(client_id)  # type: ignore[return-value]
 
     def reset_client_pin(self, client_id: int, new_pin: str) -> None:
@@ -331,9 +417,38 @@ class Database:
         row = self._conn.execute("SELECT pin_hash FROM clients WHERE id = ?", (client_id,)).fetchone()
         return row is not None and verify_pin(pin, row["pin_hash"])
 
+    def set_photo_consent(self, client_id: int, granted: bool) -> None:
+        """Consentimento de imagem (LGPD art. 11) — separado do termo geral, revogável a qualquer momento.
+
+        Conceder preserva a data do primeiro aceite (não a atualiza a cada edição do
+        cadastro); revogar zera a data, e o chamador decide se apaga as fotos já
+        capturadas (RF de LGPD — pergunta feita no painel admin, não aqui).
+        """
+        if self.get_client(client_id) is None:
+            raise InvalidClient(f"cliente {client_id} não existe")
+        if granted:
+            self._conn.execute(
+                "UPDATE clients SET photo_consent_at = COALESCE(photo_consent_at, ?) WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), client_id),
+            )
+        else:
+            self._conn.execute("UPDATE clients SET photo_consent_at = NULL WHERE id = ?", (client_id,))
+        self._conn.commit()
+
     def delete_client(self, client_id: int) -> None:
+        """Apaga o cliente e, com ele, os arquivos de foto em disco (RF de LGPD — sem isso ficam órfãos)."""
+        photo_paths = [
+            (row["file_path"], row["thumb_path"])
+            for row in self._conn.execute(
+                "SELECT file_path, thumb_path FROM progress_photos WHERE client_id = ?", (client_id,)
+            )
+        ]
         self._conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
         self._conn.commit()
+        for file_path, thumb_path in photo_paths:
+            for p in (file_path, thumb_path):
+                if p:
+                    Path(p).unlink(missing_ok=True)
 
     def last_weight_by_client(self) -> dict[int, float]:
         """Peso da medição mais recente de cada cliente — usado pelo motor de sugestão (RF04)."""
@@ -438,10 +553,13 @@ class Database:
 
     # -- Fotos de evolução ("antes e depois") --------------------------------
 
-    def add_progress_photo(self, *, client_id: int, file_path: str, content_type: str) -> ProgressPhoto:
+    def add_progress_photo(
+        self, *, client_id: int, file_path: str, content_type: str, thumb_path: str | None = None
+    ) -> ProgressPhoto:
         cursor = self._conn.execute(
-            "INSERT INTO progress_photos (client_id, taken_at, file_path, content_type) VALUES (?, ?, ?, ?)",
-            (client_id, datetime.now(timezone.utc).isoformat(), file_path, content_type),
+            "INSERT INTO progress_photos (client_id, taken_at, file_path, content_type, thumb_path) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (client_id, datetime.now(timezone.utc).isoformat(), file_path, content_type, thumb_path),
         )
         self._conn.commit()
         return self.get_progress_photo(cursor.lastrowid)  # type: ignore[return-value,arg-type]
@@ -460,6 +578,121 @@ class Database:
         self._conn.execute("DELETE FROM progress_photos WHERE id = ?", (photo_id,))
         self._conn.commit()
 
+    def upsert_measurement_photo(
+        self,
+        *,
+        client_id: int,
+        measurement_id: int,
+        pose_type: str,
+        file_path: str,
+        thumb_path: str | None,
+        content_type: str,
+    ) -> tuple[ProgressPhoto, list[str]]:
+        """Grava a foto de uma pose vinculada a uma medição, substituindo uma tentativa
+        anterior da mesma pose (repetir uma pose não deve acumular linha nova).
+
+        Devolve (foto atual, arquivos antigos que o chamador deve apagar do disco).
+        """
+        old_row = self._conn.execute(
+            "SELECT file_path, thumb_path FROM progress_photos WHERE measurement_id = ? AND pose_type = ?",
+            (measurement_id, pose_type),
+        ).fetchone()
+
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "INSERT INTO progress_photos "
+            "(client_id, measurement_id, pose_type, taken_at, file_path, thumb_path, content_type, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'kiosk') "
+            "ON CONFLICT(measurement_id, pose_type) WHERE measurement_id IS NOT NULL AND pose_type IS NOT NULL "
+            "DO UPDATE SET "
+            "taken_at = excluded.taken_at, file_path = excluded.file_path, "
+            "thumb_path = excluded.thumb_path, content_type = excluded.content_type",
+            (client_id, measurement_id, pose_type, now, file_path, thumb_path, content_type),
+        )
+        self._conn.commit()
+
+        # cursor.lastrowid não é confiável aqui: num UPSERT que cai no ramo UPDATE,
+        # o SQLite não atualiza last_insert_rowid() — busca pela chave de verdade.
+        photo = self._get_measurement_pose_photo(measurement_id, pose_type)
+
+        old_paths = []
+        if old_row is not None:
+            for p in (old_row["file_path"], old_row["thumb_path"]):
+                if p and p not in (file_path, thumb_path):
+                    old_paths.append(p)
+        return photo, old_paths  # type: ignore[return-value]
+
+    def _get_measurement_pose_photo(self, measurement_id: int, pose_type: str) -> ProgressPhoto | None:
+        row = self._conn.execute(
+            "SELECT * FROM progress_photos WHERE measurement_id = ? AND pose_type = ?",
+            (measurement_id, pose_type),
+        ).fetchone()
+        return _row_to_photo(row) if row else None
+
+    def latest_photos_by_pose(self, client_id: int) -> dict[str, ProgressPhoto]:
+        """Última foto de cada pose do cliente — a mais recente de verdade (por id), não uma
+        linha arbitrária do grupo (bug do PRD 2.0: `GROUP BY pose_type HAVING MAX(id)`
+        devolve uma linha qualquer do grupo, já que o HAVING não junta com o MAX)."""
+        rows = self._conn.execute(
+            "SELECT p.* FROM progress_photos p "
+            "JOIN (SELECT pose_type, MAX(id) AS id FROM progress_photos "
+            "      WHERE client_id = ? AND pose_type IS NOT NULL GROUP BY pose_type) latest "
+            "  ON latest.id = p.id",
+            (client_id,),
+        ).fetchall()
+        return {row["pose_type"]: _row_to_photo(row) for row in rows}
+
+    def first_measurement_with_photos(self, client_id: int) -> dict | None:
+        """A medição "antes" de verdade — a primeira que tem foto, não a primeira medição
+        do cliente (que costuma ser de antes desse recurso existir, sem foto nenhuma)."""
+        row = self._conn.execute(
+            "SELECT m.* FROM measurements m WHERE m.client_id = ? "
+            "AND EXISTS (SELECT 1 FROM progress_photos p WHERE p.measurement_id = m.id) "
+            "ORDER BY m.recorded_at ASC LIMIT 1",
+            (client_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def latest_measurement_with_photos(self, client_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT m.* FROM measurements m WHERE m.client_id = ? "
+            "AND EXISTS (SELECT 1 FROM progress_photos p WHERE p.measurement_id = m.id) "
+            "ORDER BY m.recorded_at DESC LIMIT 1",
+            (client_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def latest_photo_taken_at(self, client_id: int) -> str | None:
+        """Data/hora da foto mais recente do cliente (qualquer pose/medição) — usada pra
+        decidir se já passou tempo suficiente pra oferecer uma foto nova de novo."""
+        row = self._conn.execute(
+            "SELECT MAX(taken_at) AS taken_at FROM progress_photos WHERE client_id = ?", (client_id,)
+        ).fetchone()
+        return row["taken_at"] if row and row["taken_at"] is not None else None
+
+    # -- Configurações editáveis pelo admin (app_settings) -----------------------
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        row = self._conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self._conn.commit()
+
+    def get_photo_prompt_min_days(self) -> int:
+        value = self.get_setting(SETTING_PHOTO_PROMPT_MIN_DAYS)
+        return int(value) if value is not None else DEFAULT_PHOTO_PROMPT_MIN_DAYS
+
+    def set_photo_prompt_min_days(self, days: int) -> None:
+        if days < 0:
+            raise ValueError("o intervalo mínimo entre fotos não pode ser negativo")
+        self.set_setting(SETTING_PHOTO_PROMPT_MIN_DAYS, str(days))
+
 
 def _row_to_client(row: sqlite3.Row) -> Client:
     return Client(
@@ -470,6 +703,7 @@ def _row_to_client(row: sqlite3.Row) -> Client:
         sex=row["sex"],
         height_cm=row["height_cm"],
         algorithm=row["algorithm"],
+        photo_consent_at=row["photo_consent_at"],
     )
 
 
@@ -480,4 +714,8 @@ def _row_to_photo(row: sqlite3.Row) -> ProgressPhoto:
         taken_at=row["taken_at"],
         file_path=row["file_path"],
         content_type=row["content_type"],
+        measurement_id=row["measurement_id"],
+        pose_type=row["pose_type"],
+        thumb_path=row["thumb_path"],
+        source=row["source"],
     )

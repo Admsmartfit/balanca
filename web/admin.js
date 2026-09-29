@@ -32,6 +32,7 @@ const clientPinField = document.getElementById("client-pin-field");
 const clientPin = document.getElementById("client-pin");
 const clientTermsRow = document.getElementById("client-terms-row");
 const clientTerms = document.getElementById("client-terms");
+const clientPhotoConsent = document.getElementById("client-photo-consent");
 const clientFormCancel = document.getElementById("client-form-cancel");
 const clientFormError = document.getElementById("client-form-error");
 
@@ -49,6 +50,13 @@ const pinModalForm = document.getElementById("pin-modal-form");
 const pinModalValue = document.getElementById("pin-modal-value");
 const pinModalCancel = document.getElementById("pin-modal-cancel");
 const pinModalError = document.getElementById("pin-modal-error");
+
+const settingsBtn = document.getElementById("settings-btn");
+const settingsModal = document.getElementById("settings-modal");
+const settingsModalForm = document.getElementById("settings-modal-form");
+const settingsPhotoPromptDays = document.getElementById("settings-photo-prompt-days");
+const settingsModalCancel = document.getElementById("settings-modal-cancel");
+const settingsModalError = document.getElementById("settings-modal-error");
 
 // -- Sessão --------------------------------------------------------------
 
@@ -162,6 +170,7 @@ newClientBtn.addEventListener("click", () => {
 
 function startEditClient(client) {
   state.editingClientId = client.id;
+  state.editingClientHadPhotoConsent = client.photo_consent_at != null;
   clientIdInput.value = client.id;
   clientName.value = client.full_name;
   clientDocument.value = client.document;
@@ -169,6 +178,7 @@ function startEditClient(client) {
   clientSex.value = client.sex;
   clientHeight.value = client.height_cm;
   clientAlgorithm.value = client.algorithm;
+  clientPhotoConsent.checked = state.editingClientHadPhotoConsent;
   clientFormTitle.textContent = `Editar ${client.full_name}`;
   openClientForm({ editing: true });
 }
@@ -176,6 +186,13 @@ function startEditClient(client) {
 clientFormCancel.addEventListener("click", () => {
   clientFormPanel.hidden = true;
 });
+
+async function _deleteAllPhotos(clientId) {
+  const photos = await (await fetch(`/api/admin/clients/${clientId}/photos`)).json();
+  for (const photo of photos) {
+    await fetch(`/api/admin/clients/${clientId}/photos/${photo.id}`, { method: "DELETE" });
+  }
+}
 
 clientForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -189,6 +206,7 @@ clientForm.addEventListener("submit", async (event) => {
     sex: clientSex.value,
     height_cm: Number(clientHeight.value),
     algorithm: clientAlgorithm.value,
+    photo_consent: clientPhotoConsent.checked,
   };
   if (!isEditing) {
     body.pin = clientPin.value.trim();
@@ -203,6 +221,12 @@ clientForm.addEventListener("submit", async (event) => {
   });
 
   if (response.ok) {
+    // revogar o consentimento não apaga as fotos sozinho — pergunta, já que é
+    // uma decisão do cliente/da academia, não algo pra fazer silenciosamente
+    const revoked = isEditing && state.editingClientHadPhotoConsent && !clientPhotoConsent.checked;
+    if (revoked && confirm("Consentimento de fotos revogado. Apagar também as fotos de evolução já registradas deste cliente?")) {
+      await _deleteAllPhotos(state.editingClientId);
+    }
     clientFormPanel.hidden = true;
     await loadClients();
   } else {
@@ -354,6 +378,33 @@ photoInput.addEventListener("change", async () => {
   await fetch(`/api/admin/clients/${state.historyClientId}/photos`, { method: "POST", body: formData });
   photoInput.value = "";
   await loadPhotos(state.historyClientId);
+});
+
+// -- Configurações ---------------------------------------------------------
+
+settingsBtn.addEventListener("click", async () => {
+  settingsModalError.textContent = "";
+  const response = await fetch("/api/admin/settings");
+  const settings = await response.json();
+  settingsPhotoPromptDays.value = settings.photo_prompt_min_days;
+  settingsModal.hidden = false;
+});
+
+settingsModalCancel.addEventListener("click", () => (settingsModal.hidden = true));
+
+settingsModalForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const response = await fetch("/api/admin/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photo_prompt_min_days: Number(settingsPhotoPromptDays.value) }),
+  });
+  if (response.ok) {
+    settingsModal.hidden = true;
+  } else {
+    const error = await response.json().catch(() => ({}));
+    settingsModalError.textContent = error.error ?? "não foi possível salvar";
+  }
 });
 
 // -- Boot ------------------------------------------------------------------

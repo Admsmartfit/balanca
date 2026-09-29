@@ -32,6 +32,7 @@
       <h1>MiScale Analytics — Administração</h1>
       <div class="topbar-right">
         <span id="admin-email"></span>
+        <button id="settings-btn" class="ghost-btn">Configurações</button>
         <button id="logout-btn" class="ghost-btn">Sair</button>
       </div>
     </header>
@@ -102,6 +103,10 @@
             <input type="checkbox" id="client-terms" />
             O cliente foi informado e aceitou o uso dos seus dados de saúde (peso, composição corporal) para esta avaliação, conforme a LGPD.
           </label>
+          <label class="checkbox-row" id="client-photo-consent-row">
+            <input type="checkbox" id="client-photo-consent" />
+            Consentimento para fotos de evolução (frente, perfil e costas). Dado sensível de saúde (LGPD art. 11) — separado do termo acima, pode ser revogado a qualquer momento.
+          </label>
           <div class="form-actions">
             <button type="submit" class="primary-btn">Salvar</button>
             <button type="button" id="client-form-cancel" class="ghost-btn">Cancelar</button>
@@ -168,6 +173,26 @@
         <button type="button" id="pin-modal-cancel" class="ghost-btn">Cancelar</button>
       </div>
       <span class="error" id="pin-modal-error"></span>
+    </form>
+  </div>
+
+  <!-- ======= Modal de configurações ======= -->
+  <div id="settings-modal" class="modal" hidden>
+    <form id="settings-modal-form" class="modal-card">
+      <h3>Configurações</h3>
+      <label>
+        Intervalo mínimo entre fotos de evolução (dias)
+        <input type="number" id="settings-photo-prompt-days" min="0" max="365" required />
+      </label>
+      <p class="hint">
+        O quiosque só pergunta "quer tirar uma foto agora?" se já tiver passado esse número de
+        dias desde a última foto do cliente (recomendado: 15 dias).
+      </p>
+      <div class="form-actions">
+        <button type="submit" class="primary-btn">Salvar</button>
+        <button type="button" id="settings-modal-cancel" class="ghost-btn">Cancelar</button>
+      </div>
+      <span class="error" id="settings-modal-error"></span>
     </form>
   </div>
 

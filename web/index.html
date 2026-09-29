@@ -38,12 +38,7 @@
       <div class="attract-stage">
         <div class="attract-halo" aria-hidden="true"></div>
         <div class="attract-figure-wrap">
-          <svg class="attract-silhouette" viewBox="0 0 200 580" aria-hidden="true">
-            <circle cx="100" cy="45" r="36" />
-            <path d="M148,84 C165,90 176,110 178,140 C180,170 176,200 170,230 C166,252 162,270 160,286 C159,294 152,296 148,290 C146,282 148,270 150,255 C154,228 156,198 152,170 C149,142 142,116 132,98 C136,90 142,84 148,84 Z" />
-            <path d="M52,84 C35,90 24,110 22,140 C20,170 24,200 30,230 C34,252 38,270 40,286 C41,294 48,296 52,290 C54,282 52,270 50,255 C46,228 44,198 48,170 C51,142 58,116 68,98 C64,90 58,84 52,84 Z" />
-            <path d="M70,78 L130,78 C150,80 158,96 156,120 C154,150 146,175 140,200 C138,215 140,230 146,244 C150,255 152,268 150,280 L158,420 C160,440 158,456 152,468 L156,540 C157,552 150,562 138,562 L128,562 C120,562 116,554 116,542 L110,400 C108,320 108,260 108,230 L100,225 L92,230 C92,260 92,320 90,400 L84,542 C84,554 80,562 72,562 L62,562 C50,562 43,552 44,540 L48,468 C42,456 40,440 42,420 L50,280 C48,268 50,255 54,244 C60,230 62,215 60,200 C54,175 46,150 44,120 C42,96 50,80 70,78 Z" />
-          </svg>
+          <img class="attract-silhouette" src="/static/img/attract-body.png" alt="Holograma de composição corporal" />
           <div class="attract-scan" aria-hidden="true"></div>
           <div class="attract-ring attract-ring-1" aria-hidden="true"></div>
           <div class="attract-ring attract-ring-2" aria-hidden="true"></div>
@@ -148,47 +143,61 @@
         </div>
       </div>
 
+      <!-- ======= Pergunta: quer tirar uma foto de evolução agora? (voz + teclado) ======= -->
+      <div class="photo-prompt-banner" id="photo-prompt-banner" hidden>
+        <p class="photo-prompt-text">Quer tirar uma foto atual para acompanhar sua evolução?</p>
+        <div class="photo-prompt-keys">
+          <span class="photo-prompt-key photo-prompt-key-yes">1 · SIM</span>
+          <span class="photo-prompt-key photo-prompt-key-no">0 · NÃO</span>
+        </div>
+      </div>
+
       <!-- ======= Orientação: aguardando subir na balança ======= -->
       <div class="waiting-card" id="waiting-card">
-        <div class="waiting-badge">
-          <span class="waiting-badge-dot"></span>
-          <span>PASSO 1 DE 3 · BIOIMPEDÂNCIA</span>
-        </div>
-        <h2 class="waiting-title">SUBA NA BALANÇA</h2>
-        <p class="waiting-subtitle">Descalço(a), posicione <strong>um pé sobre cada par de sensores</strong>. Fique parado(a), braços soltos, e olhe para frente.</p>
-        <div class="waiting-arrow" aria-hidden="true">▼</div>
+        <div class="waiting-top-row">
+          <div class="waiting-text-col">
+            <div class="waiting-badge">
+              <span class="waiting-badge-dot"></span>
+              <span>PASSO 1 DE 3 · BIOIMPEDÂNCIA</span>
+            </div>
+            <h2 class="waiting-title">SUBA NA BALANÇA</h2>
+            <p class="waiting-subtitle">Descalço(a), posicione <strong>um pé sobre cada par de sensores</strong>. Fique parado(a), braços soltos, e olhe para frente.</p>
+          </div>
 
-        <div class="waiting-platform-wrap" aria-hidden="true">
-          <div class="waiting-ripple waiting-ripple-1"></div>
-          <div class="waiting-ripple waiting-ripple-2"></div>
-          <div class="waiting-platform">
-            <div class="waiting-sweep"></div>
-            <div class="waiting-corner waiting-corner-tl"></div>
-            <div class="waiting-corner waiting-corner-tr"></div>
-            <div class="waiting-corner waiting-corner-bl"></div>
-            <div class="waiting-corner waiting-corner-br"></div>
-            <div class="waiting-foot waiting-foot-l"></div>
-            <div class="waiting-foot waiting-foot-r"></div>
-            <div class="waiting-weight-display">
-              <span id="waiting-weight-value">– –</span>
-              <span class="waiting-weight-unit">KG</span>
+          <div class="waiting-platform-wrap" aria-hidden="true">
+            <div class="waiting-ripple waiting-ripple-1"></div>
+            <div class="waiting-ripple waiting-ripple-2"></div>
+            <div class="waiting-platform">
+              <div class="waiting-sweep"></div>
+              <div class="waiting-corner waiting-corner-tl"></div>
+              <div class="waiting-corner waiting-corner-tr"></div>
+              <div class="waiting-corner waiting-corner-bl"></div>
+              <div class="waiting-corner waiting-corner-br"></div>
+              <div class="waiting-foot waiting-foot-l"></div>
+              <div class="waiting-foot waiting-foot-r"></div>
+              <div class="waiting-weight-display">
+                <span id="waiting-weight-value">– –</span>
+                <span class="waiting-weight-unit">KG</span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="waiting-steps-grid">
-          <div class="waiting-step"><span class="waiting-step-num">01</span><span>Retire sapatos e meias</span></div>
-          <div class="waiting-step"><span class="waiting-step-num">02</span><span>Pés secos sobre os 4 sensores</span></div>
-          <div class="waiting-step"><span class="waiting-step-num">03</span><span>Não se apoie em nada</span></div>
-        </div>
-
-        <div class="waiting-status-bar">
-          <div class="waiting-status-row">
-            <span class="waiting-status-dot" id="waiting-status-dot"></span>
-            <span class="waiting-status-label" id="waiting-status-label">AGUARDANDO PESO</span>
-            <span class="waiting-status-hint" id="waiting-status-hint">Suba na plataforma para iniciar</span>
+        <div class="waiting-bottom-row">
+          <div class="waiting-steps-grid">
+            <div class="waiting-step"><span class="waiting-step-num">01</span><span>Retire sapatos e meias</span></div>
+            <div class="waiting-step"><span class="waiting-step-num">02</span><span>Pés secos sobre os 4 sensores</span></div>
+            <div class="waiting-step"><span class="waiting-step-num">03</span><span>Não se apoie em nada</span></div>
           </div>
-          <div class="waiting-progress-track"><div class="waiting-progress-fill" id="waiting-progress-fill"></div></div>
+
+          <div class="waiting-status-bar">
+            <div class="waiting-status-row">
+              <span class="waiting-status-dot" id="waiting-status-dot"></span>
+              <span class="waiting-status-label" id="waiting-status-label">AGUARDANDO PESO</span>
+              <span class="waiting-status-hint" id="waiting-status-hint">Suba na plataforma para iniciar</span>
+            </div>
+            <div class="waiting-progress-track"><div class="waiting-progress-fill" id="waiting-progress-fill"></div></div>
+          </div>
         </div>
 
         <div class="waiting-footer">MISCALE ANALYTICS · BIA PLATFORM 01</div>
@@ -196,109 +205,111 @@
 
       <!-- ======= Resultado (some até chegar a primeira leitura) ======= -->
       <div id="session-results" hidden>
-        <!-- 3 cartões do topo -->
-        <div class="top-cards-row">
-          <div class="score-card">
-            <div class="top-card-label">PONTUAÇÃO CORPORAL</div>
-            <div class="score-value-row">
-              <span class="score-value" id="score-value-big">--</span>
-              <span class="score-max">/100</span>
-            </div>
-            <div class="score-tier" id="score-tier">—</div>
-            <div class="score-bar-vertical"><div class="score-bar-fill" id="score-bar-fill"></div></div>
-          </div>
-
-          <div class="top-card">
-            <div class="top-card-label">PESO ATUAL</div>
-            <div class="top-card-value-row">
-              <span id="weight-value">--,-</span>
-              <span class="top-card-unit" id="weight-unit">kg</span>
-            </div>
-            <span class="top-card-trend" id="weight-trend"></span>
-          </div>
-
-          <div class="top-card top-card-journey">
-            <div class="top-card-label">JORNADA</div>
-            <div class="top-card-value-row">
-              <span id="journey-weeks">--</span>
-              <span class="top-card-unit">semanas</span>
-            </div>
-            <span class="top-card-trend top-card-trend-journey" id="journey-count">primeira medição</span>
-          </div>
-        </div>
-
-        <p class="weight-hint" id="weight-hint">suba na balança</p>
-
-        <!-- 3 colunas: métricas · silhueta · métricas -->
-        <div class="bio-hero-row">
-          <div class="bio-col" id="bio-col-left"></div>
-
-          <div class="bio-silhouette-wrap">
-            <div class="bio-halo" aria-hidden="true"></div>
-            <svg class="bio-silhouette-fig" viewBox="0 0 200 580" aria-hidden="true">
-              <circle cx="100" cy="45" r="36" />
-              <path d="M148,84 C165,90 176,110 178,140 C180,170 176,200 170,230 C166,252 162,270 160,286 C159,294 152,296 148,290 C146,282 148,270 150,255 C154,228 156,198 152,170 C149,142 142,116 132,98 C136,90 142,84 148,84 Z" />
-              <path d="M52,84 C35,90 24,110 22,140 C20,170 24,200 30,230 C34,252 38,270 40,286 C41,294 48,296 52,290 C54,282 52,270 50,255 C46,228 44,198 48,170 C51,142 58,116 68,98 C64,90 58,84 52,84 Z" />
-              <path d="M70,78 L130,78 C150,80 158,96 156,120 C154,150 146,175 140,200 C138,215 140,230 146,244 C150,255 152,268 150,280 L158,420 C160,440 158,456 152,468 L156,540 C157,552 150,562 138,562 L128,562 C120,562 116,554 116,542 L110,400 C108,320 108,260 108,230 L100,225 L92,230 C92,260 92,320 90,400 L84,542 C84,554 80,562 72,562 L62,562 C50,562 43,552 44,540 L48,468 C42,456 40,440 42,420 L50,280 C48,268 50,255 54,244 C60,230 62,215 60,200 C54,175 46,150 44,120 C42,96 50,80 70,78 Z" />
-            </svg>
-            <div class="bio-scan" aria-hidden="true"></div>
-            <div class="bio-ring" aria-hidden="true"></div>
-            <div class="bio-platform-label">MISCALE · BIA</div>
-          </div>
-
-          <div class="bio-col" id="bio-col-right"></div>
-        </div>
-
-        <!-- ======= Antes / Depois (fotos ainda não implementadas — layout de prévia) ======= -->
-        <div class="compare-section">
-          <div class="compare-heading">
-            <span class="compare-title">Evolução visual</span>
-            <span class="compare-rule" aria-hidden="true"></span>
-            <span class="compare-sub">Registros do terminal</span>
-          </div>
-          <div class="compare-row">
-            <div class="compare-card">
-              <div class="compare-card-head">
-                <span class="compare-card-tag">ANTES</span>
-                <span class="compare-card-date" id="compare-before-date">—</span>
+        <div class="results-columns">
+          <!-- ======= Coluna esquerda: cartões do topo + silhueta com métricas ======= -->
+          <div class="results-col-left">
+            <div class="top-cards-row">
+              <div class="score-card">
+                <div class="top-card-label">PONTUAÇÃO CORPORAL</div>
+                <div class="score-value-row">
+                  <span class="score-value" id="score-value-big">--</span>
+                  <span class="score-max">/100</span>
+                </div>
+                <div class="score-tier" id="score-tier">—</div>
+                <div class="score-bar-vertical"><div class="score-bar-fill" id="score-bar-fill"></div></div>
               </div>
-              <div class="compare-photo-slot">
-                <span class="camera-icon">📷</span>
-                <span>Foto de evolução em breve</span>
+
+              <div class="top-card">
+                <div class="top-card-label">PESO ATUAL</div>
+                <div class="top-card-value-row">
+                  <span id="weight-value">--,-</span>
+                  <span class="top-card-unit" id="weight-unit">kg</span>
+                </div>
+                <span class="top-card-trend" id="weight-trend"></span>
               </div>
-              <div class="compare-stats" id="compare-before-stats"></div>
+
+              <div class="top-card top-card-journey">
+                <div class="top-card-label">JORNADA</div>
+                <div class="top-card-value-row">
+                  <span id="journey-weeks">--</span>
+                  <span class="top-card-unit">semanas</span>
+                </div>
+                <span class="top-card-trend top-card-trend-journey" id="journey-count">primeira medição</span>
+              </div>
             </div>
 
-            <div class="compare-arrow">
-              <span class="compare-arrow-icon">➞</span>
-              <span class="compare-arrow-label" id="compare-weeks">— semanas</span>
-            </div>
+            <p class="weight-hint" id="weight-hint">suba na balança</p>
 
-            <div class="compare-card compare-card-now">
-              <div class="compare-card-head">
-                <span class="compare-card-tag compare-card-tag-accent">DEPOIS · HOJE</span>
-                <span class="compare-card-date" id="compare-after-date">—</span>
+            <!-- 3 colunas: métricas · silhueta · métricas -->
+            <div class="bio-hero-row">
+              <div class="bio-col" id="bio-col-left"></div>
+
+              <div class="bio-silhouette-wrap">
+                <div class="bio-halo" aria-hidden="true"></div>
+                <img class="bio-silhouette-fig" src="/static/img/results-body.png" alt="Silhueta de composição corporal" />
+                <div class="bio-scan" aria-hidden="true"></div>
+                <div class="bio-ring" aria-hidden="true"></div>
+                <div class="bio-platform-label">MISCALE · BIA</div>
               </div>
-              <div class="compare-photo-slot">
-                <span class="camera-icon">📷</span>
-                <span>Foto de evolução em breve</span>
-              </div>
-              <div class="compare-stats" id="compare-after-stats"></div>
+
+              <div class="bio-col" id="bio-col-right"></div>
             </div>
           </div>
 
-          <div class="delta-badges-row" id="delta-badges-row"></div>
-        </div>
+          <!-- ======= Coluna direita: antes/depois + tendência histórica ======= -->
+          <div class="results-col-right">
+            <!-- ======= Antes / Depois (fotos ainda não implementadas — layout de prévia) ======= -->
+            <div class="compare-section">
+              <div class="compare-heading">
+                <span class="compare-title">Evolução visual</span>
+                <span class="compare-rule" aria-hidden="true"></span>
+                <span class="compare-sub">Registros do terminal</span>
+              </div>
+              <div class="compare-row">
+                <div class="compare-card">
+                  <div class="compare-card-head">
+                    <span class="compare-card-tag">ANTES</span>
+                    <span class="compare-card-date" id="compare-before-date">—</span>
+                  </div>
+                  <div class="compare-photo-slot">
+                    <span class="camera-icon">📷</span>
+                    <span>Foto de evolução em breve</span>
+                  </div>
+                  <div class="compare-stats" id="compare-before-stats"></div>
+                </div>
 
-        <!-- ======= Tendência histórica ======= -->
-        <div class="trend-section">
-          <div class="trend-heading">
-            <span class="trend-title">Tendência histórica</span>
-            <span class="trend-legend"><span class="trend-swatch" data-color="orange"></span>% Gordura</span>
-            <span class="trend-legend"><span class="trend-swatch" data-color="cyan"></span>Massa muscular</span>
+                <div class="compare-arrow">
+                  <span class="compare-arrow-icon">➞</span>
+                  <span class="compare-arrow-label" id="compare-weeks">— semanas</span>
+                </div>
+
+                <div class="compare-card compare-card-now">
+                  <div class="compare-card-head">
+                    <span class="compare-card-tag compare-card-tag-accent">DEPOIS · HOJE</span>
+                    <span class="compare-card-date" id="compare-after-date">—</span>
+                  </div>
+                  <div class="compare-photo-slot">
+                    <span class="camera-icon">📷</span>
+                    <span>Foto de evolução em breve</span>
+                  </div>
+                  <div class="compare-stats" id="compare-after-stats"></div>
+                </div>
+              </div>
+
+              <div class="delta-badges-row" id="delta-badges-row"></div>
+            </div>
+
+            <!-- ======= Tendência histórica ======= -->
+            <div class="trend-section">
+              <div class="trend-heading">
+                <span class="trend-title">Tendência histórica</span>
+                <span class="trend-legend"><span class="trend-swatch" data-color="orange"></span>% Gordura</span>
+                <span class="trend-legend"><span class="trend-swatch" data-color="cyan"></span>Massa muscular</span>
+              </div>
+              <svg class="trend-chart" id="trend-chart" viewBox="0 0 1000 190" preserveAspectRatio="none"></svg>
+              <div class="trend-month-labels" id="trend-month-labels"></div>
+            </div>
           </div>
-          <svg class="trend-chart" id="trend-chart" viewBox="0 0 1000 190" preserveAspectRatio="none"></svg>
-          <div class="trend-month-labels" id="trend-month-labels"></div>
         </div>
       </div>
 

@@ -16,6 +16,7 @@ const state = {
   countdownSecondsLeft: SESSION_TIMEOUT_SECONDS,
   countdownTimer: null,
   clockTimer: null,
+  photoPromptActive: false, // true enquanto aguarda resposta de "quer tirar uma foto agora?"
 };
 
 // -- Elementos --------------------------------------------------------
@@ -76,6 +77,8 @@ const trendMonthLabels = document.getElementById("trend-month-labels");
 const countdownPill = document.getElementById("countdown-pill");
 const countdownText = document.getElementById("countdown-text");
 
+const photoPromptBanner = document.getElementById("photo-prompt-banner");
+
 const attractEyebrowText = document.getElementById("attract-eyebrow-text");
 const attractLine1 = document.getElementById("attract-line1");
 const attractLine2 = document.getElementById("attract-line2");
@@ -84,13 +87,46 @@ const attractTiles = document.getElementById("attract-tiles");
 const attractTime = document.getElementById("attract-time");
 const attractDate = document.getElementById("attract-date");
 
-function speak(text) {
+// Orientações faladas: áudio gravado com voz natural (gerado uma vez em
+// scripts/generate_voice_prompts.py, tocado offline — nada de rede aqui em
+// tempo real). A voz sintetizada do navegador (SpeechSynthesis) só entra
+// como reserva, caso o arquivo não carregue por algum motivo — assim a
+// orientação nunca fica muda, só menos natural.
+const VOICE_PROMPTS = {
+  waitingInstruction: {
+    file: "/static/audio/waiting-instruction.mp3",
+    fallbackText: "Pode subir na balança, descalço, com um pé em cada par de sensores. Fique parado até a leitura terminar, por favor.",
+  },
+  photoPrompt: {
+    file: "/static/audio/photo-prompt.mp3",
+    fallbackText: "Quer tirar uma foto agora, para acompanhar sua evolução? Aperte 1 para sim, ou 0 para não.",
+  },
+};
+
+const voicePlayer = new Audio();
+
+function stopSpeaking() {
+  voicePlayer.pause();
+  voicePlayer.currentTime = 0;
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+}
+
+function speakFallback(text) {
   if (!("speechSynthesis" in window)) return;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "pt-BR";
   utterance.rate = 0.95;
   window.speechSynthesis.speak(utterance);
+}
+
+function speak(promptKey) {
+  const prompt = VOICE_PROMPTS[promptKey];
+  if (!prompt) return;
+
+  stopSpeaking();
+  voicePlayer.src = prompt.file;
+  voicePlayer.play().catch(() => speakFallback(prompt.fallbackText));
 }
 
 function ptBr(value, decimals) {
@@ -233,7 +269,7 @@ function showScreen(name) {
 }
 
 function _clearAuthState() {
-  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  stopSpeaking();
   state.documentBuffer = "";
   state.pendingIdentifier = null;
   state.pinBuffer = "";
@@ -243,6 +279,32 @@ function _clearAuthState() {
   renderPinDisplay();
   stopCountdown();
   stopClock();
+  hidePhotoPrompt();
+}
+
+// -- Pergunta: quer tirar uma foto agora? (PRD v3 — Fotometria Corporal) --------
+// Só voz + teclado numérico, igual ao resto do quiosque — sem microfone: a
+// balança já não usa toque, e reconhecimento de voz precisaria de hardware
+// novo e dependeria de rede ou de um modelo local só pra "sim"/"não".
+
+function showPhotoPrompt() {
+  state.photoPromptActive = true;
+  photoPromptBanner.hidden = false;
+  speak("photoPrompt");
+}
+
+function hidePhotoPrompt() {
+  state.photoPromptActive = false;
+  photoPromptBanner.hidden = true;
+}
+
+async function answerPhotoPrompt(accepted) {
+  hidePhotoPrompt();
+  await fetch("/api/kiosk/photo-prompt/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accepted }),
+  });
 }
 
 function resetToIdle() {
@@ -776,7 +838,7 @@ function renderReading(message) {
   if (!waitingCard.hidden) {
     waitingCard.hidden = true;
     sessionResults.hidden = false;
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    stopSpeaking();
   }
 
   weightValue.textContent = ptBr(message.weight_kg, 1);
@@ -800,6 +862,8 @@ function renderReading(message) {
   setStatusPill("done");
 
   renderMetricCards(message);
+
+  if (message.photo_prompt) showPhotoPrompt();
 }
 
 async function logout() {
@@ -855,8 +919,13 @@ hardwareInput.addEventListener("keydown", (event) => {
   const key = event.key;
 
   if (state.screen === "session") {
+    if (state.photoPromptActive) {
+      if (key === "1") answerPhotoPrompt(true);
+      else if (key === "0") answerPhotoPrompt(false);
+      return; // enquanto aguarda resposta, só 1/0 valem — não deixa "tocar" sem querer
+    }
     sendTouch();
-    return; // nenhuma tecla controla a tela de sessão
+    return; // nenhuma outra tecla controla a tela de sessão
   }
 
   if (state.screen === "attract") showScreen("idle"); // qualquer tecla acorda o descanso de tela
@@ -916,6 +985,7 @@ function connectWebSocket() {
       state.pendingIdentifier = null;
       state.pinBuffer = "";
       state.history = [];
+      hidePhotoPrompt();
       renderSessionHeader(message.client);
       weightValue.textContent = "--,-";
       weightHint.textContent = "suba na balança";
@@ -927,7 +997,7 @@ function connectWebSocket() {
       startCountdown();
       startClock();
       showScreen("session");
-      speak("Suba na balança descalço, com um pé sobre cada par de sensores, e fique parado até a leitura ser concluída.");
+      speak("waitingInstruction");
       return;
     }
     if (message.type === "session_ended") {
@@ -936,6 +1006,14 @@ function connectWebSocket() {
     }
     if (message.type === "partial" || message.type === "final") {
       if (state.screen === "session") renderReading(message);
+      return;
+    }
+    if (message.type === "capture_started" || message.type === "photo_prompt_declined") {
+      // a resposta já esconde o banner localmente (answerPhotoPrompt) — isto é só
+      // uma rede de segurança caso o evento chegue por outro caminho. A tela de
+      // câmera (Etapa 2 do PRD de fotometria) ainda não existe: aceitar "sim" hoje
+      // só deixa a sessão em modo de captura sem UI própria, até essa etapa entrar.
+      hidePhotoPrompt();
       return;
     }
   });
